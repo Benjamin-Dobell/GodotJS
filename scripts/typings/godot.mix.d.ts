@@ -201,4 +201,31 @@ declare module "godot" {
                 ? ResolveNodePath<ChildMap, SubPath, Default>
                 : Default
             : Default;
+
+    /**
+     * GArray elements are exposed with a subset of JavaScript's standard Array API. Array indexes are exposed as
+     * enumerable properties, thus if you want to perform more complex operations you can convert to a regular
+     * JavaScript array with [...g_array.proxy()].
+     */
+    type GArrayProxy<T> = {
+        [Symbol.iterator](): IteratorObject<T>;
+        toJSON(key?: any): any;
+        toString(): string;
+        [n: number]: T | GProxyValueWrap<T>; // More accurate get type blocked by https://github.com/microsoft/TypeScript/issues/43826
+    } & Pick<Array<T>, "length" | "pop"> & Pick<Array<T | GProxyValueUnwrap<T>>, "push" | "indexOf" | "includes">;
+
+    /**
+     * GObject entries are exposed as enumerable properties, so Object.keys(), Object.entries() etc. will work.
+     */
+    type GDictionaryProxy<T> = {
+        [K in keyof T & string]: T[K] | GProxyValueWrap<T[K]>; // More accurate get type blocked by https://github.com/microsoft/TypeScript/issues/43826
+    } & ('toString' extends keyof T ? {} : {
+        toString(): string;
+    });
+
+    type GProxyValueWrap<V> = V extends GArray<infer E>
+        ? GArrayProxy<E>
+        : V extends GDictionary<infer T>
+            ? GDictionaryProxy<T>
+            : V;
 }
