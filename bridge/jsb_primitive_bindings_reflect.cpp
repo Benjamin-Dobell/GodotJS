@@ -817,6 +817,7 @@ namespace jsb
                 if (r_class_id) *r_class_id = class_id;
 
                 NativeClassInfoPtr class_info = p_env.env->get_native_class(class_id);
+                class_info = p_env.env->get_native_class(class_id);
                 class_info->finalizer = &finalizer;
                 class_info->clazz = class_builder.Build();
                 jsb_check(!class_info->clazz.IsEmpty());
