@@ -332,6 +332,35 @@ const TypeMutations: Record<string, TypeMutation> = {
             set: chain_mutators(mutate_parameter_type("key", "K"), mutate_parameter_type("value", "T[K]"), mutate_template("K extends keyof T")),
         }
     },
+    Input: {
+        property_overrides: {
+            is_action_pressed: mutate_parameter_type('action', 'InputActionName'),
+            is_action_just_pressed: mutate_parameter_type('action', 'InputActionName'),
+            is_action_just_released: mutate_parameter_type('action', 'InputActionName'),
+            get_action_strength: mutate_parameter_type('action', 'InputActionName'),
+            get_action_raw_strength: mutate_parameter_type('action', 'InputActionName'),
+            get_axis: chain_mutators(
+              mutate_parameter_type('negative_action', 'InputActionName'),
+              mutate_parameter_type('positive_action', 'InputActionName')
+            ),
+            get_vector: chain_mutators(
+              mutate_parameter_type('negative_x', 'InputActionName'),
+              mutate_parameter_type('positive_x', 'InputActionName'),
+              mutate_parameter_type('negative_y', 'InputActionName'),
+              mutate_parameter_type('positive_y', 'InputActionName')
+            ),
+            action_press: mutate_parameter_type('action', 'InputActionName'),
+            action_release: mutate_parameter_type('action', 'InputActionName'),
+        },
+    },
+    InputEvent: {
+        property_overrides: {
+            is_action: mutate_parameter_type('action', 'InputActionName'),
+            is_action_pressed: mutate_parameter_type('action', 'InputActionName'),
+            is_action_released: mutate_parameter_type('action', 'InputActionName'),
+            get_action_strength: mutate_parameter_type('action', 'InputActionName'),
+        },
+    },
     Node: {
         prelude: [
             `namespace __PathMappableDummyKeys { const Node: unique symbol }`,
@@ -604,7 +633,7 @@ class CodegenTasks {
     }
 }
 
-const MockLines = [
+const PredefinedLines = [
     "type byte = number",
     "type int32 = number",
     "type int64 = number /* || bigint */",
@@ -2375,11 +2404,12 @@ export class TSDCodeGen {
     private _outDir: string;
     private _splitter: FileSplitter | undefined;
     private _types: TypeDB;
+    private _use_project_settings: boolean;
 
-    constructor(outDir: string) {
+    constructor(outDir: string, use_project_settings: boolean) {
         this._split_index = 0;
         this._outDir = outDir;
-
+        this._use_project_settings = use_project_settings;
         this._types = new TypeDB();
     }
 
@@ -2439,8 +2469,8 @@ export class TSDCodeGen {
 
         const tasks = new CodegenTasks("godot.d.ts");
 
-        // predefined lines
-        tasks.add_task("Predefined Lines", () => this.emit_mock());
+        // aliases
+        tasks.add_task("Aliases", () => this.emit_aliases());
 
         // all singletons
         for (let singleton_name in this._types.singletons) {
@@ -2513,9 +2543,9 @@ export class TSDCodeGen {
         ns.finish();
     }
 
-    private emit_mock() {
+    private emit_aliases() {
         const cg = this.split();
-        for (let line of MockLines) {
+        for (let line of PredefinedLines) {
             cg.line(line);
         }
 
@@ -2530,6 +2560,16 @@ export class TSDCodeGen {
             cg.line(gd_variant_alias);
         }
 
+        if (this._use_project_settings) {
+            cg.line("type InputActionName = ");
+            const indent = new IndentWriter(cg);
+            for (const action of jsb.editor.get_input_actions()) {
+                indent.line(`| "${action}"`);
+            }
+            indent.finish();
+        } else {
+            cg.line("type InputActionName = string")
+        }
     }
 
     private emit_singleton(singleton: GodotJsb.editor.SingletonInfo) {
