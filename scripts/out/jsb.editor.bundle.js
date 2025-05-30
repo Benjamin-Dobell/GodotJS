@@ -184,6 +184,32 @@ define("jsb.editor.codegen", ["require", "exports"], function (require, exports)
                 call: ["call: T"],
             },
         },
+        CameraFeed: {
+            prelude: [
+                "namespace CameraFeed {",
+                "    type FeedFormat = GDictionary<{",
+                "        width: int64",
+                "        height: int64",
+                "        format: string",
+                `        frame_numerator?: int64`,
+                `        frame_denominator?: int64`,
+                `        pixel_format?: uint32`,
+                "    }>",
+                "}",
+                "",
+            ],
+            property_overrides: {
+                formats: [
+                    `get formats(): GArray<CameraFeed.FeedFormat>`,
+                    `set formats(value: GArray<CameraFeed.FeedFormat>)`,
+                ],
+            },
+        },
+        CameraServer: {
+            property_overrides: {
+                feeds: mutate_return_type("GArray<CameraFeed>"),
+            },
+        },
         GArray: {
             generic_parameters: {
                 T: {
@@ -192,7 +218,14 @@ define("jsb.editor.codegen", ["require", "exports"], function (require, exports)
             },
             intro: [
                 "/** Builder function that returns a GArray populated with elements from a JS array. */",
-                "static create<T>(elements: [T] extends [GArray<infer E>] ? Array<E | GProxyValueWrap<E>> : Array<T | GProxyValueWrap<T>>): [T] extends [GArray<infer E>] ? GArray<E> : GArray<T>",
+                "static create<T>(elements: [T] extends [GArray<infer E>] ? Array<E | GProxyValueWrap<E>> : Array<T | GProxyValueWrap<T>>):",
+                "    [T] extends [GArray<infer E>]",
+                "        ? [GValueWrap<E>] extends [never]",
+                "            ? never",
+                "            : GArray<GValueWrap<T>>",
+                "        : [GValueWrap<T>] extends [never]",
+                "            ? never",
+                "            : GArray<GValueWrap<T>>",
                 "[Symbol.iterator](): IteratorObject<T>",
                 "/** Returns a Proxy that targets this GArray but behaves similar to a JavaScript array. */",
                 "proxy<Write extends boolean = false>(): Write extends true ? GArrayProxy<T> : GArrayReadProxy<T>",
@@ -241,7 +274,7 @@ define("jsb.editor.codegen", ["require", "exports"], function (require, exports)
             },
             intro: [
                 "/** Builder function that returns a GDictionary with properties populated from a source JS object. */",
-                "static create<T>(properties: T extends GDictionary<infer S> ? GDictionaryProxy<S> : GDictionaryProxy<T>): T extends GDictionary<infer S> ? GDictionary<S> : GDictionary<T>",
+                "static create<T>(properties: T extends GDictionary<infer S> ? GDictionaryProxy<S> : GDictionaryProxy<T>): T extends GDictionary<infer S> ? GValueWrap<S> : GValueWrap<T>",
                 "[Symbol.iterator](): IteratorObject<{ key: any, value: any }>",
                 "/** Returns a Proxy that targets this GDictionary but behaves similar to a regular JavaScript object. Values are exposed as enumerable properties, so Object.keys(), Object.entries() etc. will work. */",
                 "proxy<Write extends boolean = false>(): Write extends true ? GDictionaryProxy<T> : GDictionaryReadProxy<T>",
@@ -491,6 +524,7 @@ define("jsb.editor.codegen", ["require", "exports"], function (require, exports)
         "type int64 = number /* || bigint */",
         "type float32 = number",
         "type float64 = number",
+        "type uint32 = number",
         "type StringName = string",
         "type unresolved = any",
     ];
