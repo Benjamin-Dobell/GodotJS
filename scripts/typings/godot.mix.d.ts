@@ -245,6 +245,15 @@ declare module "godot" {
         ? T
         : V;
 
+    type GWrappablePrimitive = string | number | boolean | null;
+    type GWrappableValue = GWrappablePrimitive | GWrappableValue[] | { [key: string]: GWrappableValue };
+    type GValueWrapUnchecked<V> = V extends Array<infer E>
+      ? GArray<GValueWrapUnchecked<E>>
+      : V extends GWrappablePrimitive
+        ? V
+        : GDictionary<{ [K in keyof V]: GValueWrapUnchecked<V[K]> }>;
+    type GValueWrap<V> = [V] extends [GWrappableValue] ? GValueWrapUnchecked<V> : never;
+
     /**
      * Semi-workaround for https://github.com/microsoft/TypeScript/issues/43826.
      * @see GReadProxyValueWrap
