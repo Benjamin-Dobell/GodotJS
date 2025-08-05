@@ -232,7 +232,7 @@ namespace jsb
 
         internal::TypeGen<StringName, v8::Global<v8::Function>>::UnorderedMap method_cache;
 
-        static void instantiate(Environment* p_env, const StringName& p_module_id, const v8::Local<v8::Object>& p_self);
+        static void instantiate(Environment* p_env, const StringName& p_module_id, const v8::Local<v8::Object>& p_self, const std::vector<v8::Local<v8::Value>>& p_parameters = std::vector<v8::Local<v8::Value>>());
 
         static bool _parse_script_class(const v8::Local<v8::Context>& p_context, JavaScriptModule& p_module);
 

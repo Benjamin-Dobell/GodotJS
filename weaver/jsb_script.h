@@ -47,6 +47,8 @@ private:
     jsb_force_inline void ensure_module_loaded() const { if (jsb_unlikely(!loaded_)) const_cast<GodotJSScript*>(this)->load_module_immediately(); }
     jsb_force_inline bool _is_valid() const { return jsb::internal::VariantUtil::is_valid_name(script_class_info_.module_id); }
 
+    Variant _new(const Variant** p_args, int p_argcount, Callable::CallError &r_error);
+
     bool _update_exports(PlaceHolderScriptInstance *p_instance_to_update);
     void _update_exports_values(List<PropertyInfo>& r_props, HashMap<StringName, Variant>& r_values);
 
@@ -59,9 +61,9 @@ public:
     // Error attach_source(const String& p_path, bool p_take_over);
     Error load_source_code(const String &p_path);
     void load_module_if_missing();
-    ScriptInstance* instance_create(const v8::Local<v8::Object>& p_this, Object* p_owner, bool p_is_temp_allowed);
-    ScriptInstance* instance_create(const v8::Local<v8::Object>& p_this, bool p_is_temp_allowed);
-    ScriptInstance* instance_create(Object* p_this, bool p_is_temp_allowed);
+    ScriptInstance* instance_create(const v8::Local<v8::Object>& p_this, Object* p_owner, bool p_is_temp_allowed, const std::vector<v8::Local<v8::Value>>& p_parameters = std::vector<v8::Local<v8::Value>>());
+    ScriptInstance* instance_create(const v8::Local<v8::Object>& p_this, bool p_is_temp_allowed, const std::vector<v8::Local<v8::Value>>& p_parameters = std::vector<v8::Local<v8::Value>>());
+    ScriptInstance* instance_create(Object* p_this, bool p_is_temp_allowed, const Variant **p_args = nullptr, int p_argcount = 0);
 
 #pragma region Script Implementation
     virtual bool can_instantiate() const override;
@@ -136,6 +138,8 @@ public:
 #pragma endregion // Script Interface Implementation
 
 protected:
+    static void _bind_methods();
+
 #pragma region Script Implementation
 #ifdef TOOLS_ENABLED
     virtual void _placeholder_erased(PlaceHolderScriptInstance* p_placeholder) override;

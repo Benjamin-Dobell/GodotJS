@@ -83,13 +83,13 @@ StringName GodotJSScript::get_instance_base_type() const
     return is_valid() ? script_class_info_.native_class_name : StringName();
 }
 
-ScriptInstance* GodotJSScript::instance_create(const v8::Local<v8::Object>& p_this, bool p_is_temp_allowed)
+ScriptInstance* GodotJSScript::instance_create(const v8::Local<v8::Object>& p_this, bool p_is_temp_allowed, const std::vector<v8::Local<v8::Value>>& p_parameters)
 {
     jsb_check(is_valid());
     jsb_check(loaded_);
 
     Object* owner = ClassDB::instantiate(script_class_info_.native_class_name);
-    ScriptInstance* instance = instance_create(p_this, owner, p_is_temp_allowed);
+    ScriptInstance* instance = instance_create(p_this, owner, p_is_temp_allowed, p_parameters);
     if (!instance)
     {
         memdelete(owner);
@@ -97,7 +97,7 @@ ScriptInstance* GodotJSScript::instance_create(const v8::Local<v8::Object>& p_th
     return instance;
 }
 
-ScriptInstance* GodotJSScript::instance_create(const v8::Local<v8::Object>& p_this, Object* p_owner, bool p_is_temp_allowed)
+ScriptInstance* GodotJSScript::instance_create(const v8::Local<v8::Object>& p_this, Object* p_owner, bool p_is_temp_allowed, const std::vector<v8::Local<v8::Value>>& p_parameters)
 {
     jsb_check(is_valid());
     jsb_check(loaded_);
@@ -140,7 +140,7 @@ ScriptInstance* GodotJSScript::instance_create(const v8::Local<v8::Object>& p_th
 }
 
 // this should only be called from godot internal
-ScriptInstance* GodotJSScript::instance_create(Object* p_this, bool p_is_temp_allowed)
+ScriptInstance* GodotJSScript::instance_create(Object* p_this, bool p_is_temp_allowed, const Variant** p_args, int p_argcount)
 {
     jsb_check(is_valid());
     jsb_check(loaded_);
@@ -180,7 +180,7 @@ ScriptInstance* GodotJSScript::instance_create(Object* p_this, bool p_is_temp_al
         MutexLock lock(GodotJSScriptLanguage::get_singleton()->mutex_);
         instances_.insert(instance->owner_);
     }
-    instance->object_id_ = env->crossbind(p_this, instance->class_id_);
+    instance->object_id_ = env->crossbind(p_this, instance->class_id_, p_args, p_argcount);
     if (!instance->object_id_)
     {
         instance->script_ = Ref<GodotJSScript>();
@@ -626,6 +626,28 @@ void GodotJSScript::_update_exports_values(List<PropertyInfo>& r_props, HashMap<
     }
 }
 
+Variant GodotJSScript::_new(const Variant** p_args, int p_argcount, Callable::CallError &r_error)
+{
+    if (!is_valid())
+    {
+        JSB_LOG(Error, "Unable to create new instance. The script was not properly loaded (%s)", get_path());
+        return Variant();
+    }
+
+    r_error.error = Callable::CallError::CALL_OK;
+    Object *owner = ClassDB::instantiate(script_class_info_.native_class_name);
+
+    ScriptInstance *script_instance = instance_create(owner, false, p_args, p_argcount);
+
+    if (!script_instance)
+    {
+        memdelete(owner);
+        return Variant();
+    }
+
+    return owner;
+}
+
 bool GodotJSScript::_update_exports(PlaceHolderScriptInstance* p_instance_to_update)
 {
     // do not crash the engine if the script not loaded successfully
@@ -710,6 +732,10 @@ bool GodotJSScript::_update_exports(PlaceHolderScriptInstance* p_instance_to_upd
     }
 
     return changed;
+}
+
+void GodotJSScript::_bind_methods() {
+    ClassDB::bind_vararg_method(METHOD_FLAGS_DEFAULT, "new", &GodotJSScript::_new, MethodInfo("new"));
 }
 
 void GodotJSScript::reload_from_file()
