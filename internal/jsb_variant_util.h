@@ -2,6 +2,7 @@
 #define GODOTJS_VARIANT_UTIL_H
 #include "jsb_internal_pch.h"
 #include "jsb_string_names.h"
+#include "core/variant/container_type_validate.h"
 
 namespace jsb::internal
 {
@@ -20,6 +21,88 @@ namespace jsb::internal
         typedef typename UnorderedMap::iterator UnorderedMapIt;
         typedef typename UnorderedMap::const_iterator UnorderedMapConstIt;
     };
+
+    struct VariantReferentialComparator {
+        static bool compare(const Variant& p_a, const Variant& p_b) {
+            return p_a.identity_compare(p_b);
+        }
+    };
+
+    /**
+     * A hasher for Variants that generates a hash based on the identity (pointers)
+     * of Objects and copy-on-write types, not their contents i.e. referential
+     * equality not structural. This takes advantage of the fact that our JS
+     * runtime passes variants around in way that is essentially by reference.
+     */
+    struct VariantReferentialHasher {
+        static uint32_t hash(const Variant& p_variant) {
+            switch (p_variant.get_type()) {
+                case Variant::Type::OBJECT: {
+                    Object* object = p_variant;
+                    return HashMapHasherDefault::hash(object);
+                }
+                case Variant::Type::DICTIONARY: {
+                    const Dictionary& d = p_variant;
+                    return HashMapHasherDefault::hash(d.id());
+                }
+                case Variant::Type::ARRAY: {
+                    const Array& a = p_variant;
+                    return HashMapHasherDefault::hash(a.id());
+                }
+                case Variant::Type::STRING: {
+                    const String& s = p_variant;
+                    return HashMapHasherDefault::hash(s.ptr());
+                }
+                case Variant::Type::PACKED_BYTE_ARRAY: {
+                    const PackedByteArray& arr = p_variant;
+                    return HashMapHasherDefault::hash(arr.ptr());
+                }
+                case Variant::Type::PACKED_INT32_ARRAY: {
+                    const PackedInt32Array& arr = p_variant;
+                    return HashMapHasherDefault::hash(arr.ptr());
+                }
+                case Variant::Type::PACKED_INT64_ARRAY: {
+                    const PackedInt64Array& arr = p_variant;
+                    return HashMapHasherDefault::hash(arr.ptr());
+                }
+                case Variant::Type::PACKED_FLOAT32_ARRAY: {
+                    const PackedFloat32Array& arr = p_variant;
+                    return HashMapHasherDefault::hash(arr.ptr());
+                }
+                case Variant::Type::PACKED_FLOAT64_ARRAY: {
+                    const PackedFloat64Array& arr = p_variant;
+                    return HashMapHasherDefault::hash(arr.ptr());
+                }
+                case Variant::Type::PACKED_STRING_ARRAY: {
+                    const PackedStringArray& arr = p_variant;
+                    return HashMapHasherDefault::hash(arr.ptr());
+                }
+                case Variant::Type::PACKED_VECTOR2_ARRAY: {
+                    const PackedVector2Array& arr = p_variant;
+                    return HashMapHasherDefault::hash(arr.ptr());
+                }
+                case Variant::Type::PACKED_VECTOR3_ARRAY: {
+                    const PackedVector3Array& arr = p_variant;
+                    return HashMapHasherDefault::hash(arr.ptr());
+                }
+                case Variant::Type::PACKED_COLOR_ARRAY: {
+                    const PackedColorArray& arr = p_variant;
+                    return HashMapHasherDefault::hash(arr.ptr());
+                }
+                case Variant::Type::PACKED_VECTOR4_ARRAY: {
+                    const PackedVector4Array& arr = p_variant;
+                    return HashMapHasherDefault::hash(arr.ptr());
+                }
+                default: {
+                    // Primitives use the standard value-based hash.
+                    return p_variant.hash();
+                }
+            }
+        }
+    };
+
+    template <typename TValue>
+    using ReferentialVariantMap = HashMap<Variant, TValue, VariantReferentialHasher, VariantReferentialComparator>;
 
     struct VariantUtil
     {
@@ -101,6 +184,116 @@ namespace jsb::internal
         jsb_force_inline static bool is_valid_name(const StringName& p_name)
         {
             return p_name.data_unique_pointer() != nullptr;
+        }
+
+        static Variant structured_clone(const Variant& p_variant, ReferentialVariantMap<Variant>& p_clone_map, bool& r_valid, int p_recursion_count = 0)
+        {
+            if (p_recursion_count == 0)
+            {
+                r_valid = true;
+            }
+
+            Variant* existing_clone = p_clone_map.getptr(p_variant);
+
+            if (existing_clone)
+            {
+                return *existing_clone;
+            }
+
+            Variant clone;
+
+            switch (p_variant.get_type())
+            {
+                case Variant::Type::OBJECT:
+                    ERR_PRINT("Structured clone cannot clone Godot Objects. Godot Objects must be transferred");
+                    r_valid = false;
+                    clone = Variant();
+                    break;
+                case Variant::Type::DICTIONARY:
+                {
+                    Dictionary original = p_variant;
+                    Dictionary dict_clone;
+                    dict_clone.set_typed(original.get_key_type(), original.get_value_type());
+
+                    if (p_recursion_count > MAX_RECURSION)
+                    {
+                        ERR_PRINT("Max recursion reached");
+                        r_valid = false;
+                        return dict_clone;
+                    }
+
+                    p_recursion_count++;
+                    for (const KeyValue<Variant, Variant>& entry: original)
+                    {
+                        dict_clone[structured_clone(entry.key, p_clone_map, r_valid, p_recursion_count)] =
+                                structured_clone(entry.value, p_clone_map, r_valid, p_recursion_count);
+                    }
+
+                    clone = dict_clone;
+                    break;
+                }
+                case Variant::Type::ARRAY:
+                {
+                    Array original = p_variant;
+                    Array arr_clone;
+                    arr_clone.set_typed(original.get_element_type());
+
+                    if (p_recursion_count > MAX_RECURSION)
+                    {
+                        ERR_PRINT("Max recursion reached");
+                        r_valid = false;
+                        return arr_clone;
+                    }
+
+                    p_recursion_count++;
+
+                    int element_count = original.size();
+                    arr_clone.resize(element_count);
+
+                    for (int i = 0; i < element_count; i++)
+                    {
+                        arr_clone.set(i, structured_clone(original.get(i), p_clone_map, r_valid, p_recursion_count));
+                    }
+
+                    clone = arr_clone;
+                    break;
+                }
+                case Variant::Type::PACKED_BYTE_ARRAY:
+                    clone = p_variant.operator Vector<uint8_t>().duplicate();
+                    break;
+                case Variant::Type::PACKED_INT32_ARRAY:
+                    clone = p_variant.operator Vector<int32_t>().duplicate();
+                    break;
+                case Variant::Type::PACKED_INT64_ARRAY:
+                    clone = p_variant.operator Vector<int64_t>().duplicate();
+                    break;
+                case Variant::Type::PACKED_FLOAT32_ARRAY:
+                    clone = p_variant.operator Vector<float>().duplicate();
+                    break;
+                case Variant::Type::PACKED_FLOAT64_ARRAY:
+                    clone = p_variant.operator Vector<double>().duplicate();
+                    break;
+                case Variant::Type::PACKED_STRING_ARRAY:
+                    clone = p_variant.operator Vector<String>().duplicate();
+                    break;
+                case Variant::Type::PACKED_VECTOR2_ARRAY:
+                    clone = p_variant.operator Vector<Vector2>().duplicate();
+                    break;
+                case Variant::Type::PACKED_VECTOR3_ARRAY:
+                    clone = p_variant.operator Vector<Vector3>().duplicate();
+                    break;
+                case Variant::Type::PACKED_COLOR_ARRAY:
+                    clone = p_variant.operator Vector<Color>().duplicate();
+                    break;
+                case Variant::Type::PACKED_VECTOR4_ARRAY:
+                    clone = p_variant.operator Vector<Vector4>().duplicate();
+                    break;
+                default:
+                    clone = p_variant;
+            }
+
+            p_clone_map[p_variant] = clone;
+            return clone;
         }
     };
 }

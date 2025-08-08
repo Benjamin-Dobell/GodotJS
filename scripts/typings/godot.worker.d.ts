@@ -5,7 +5,7 @@ declare module "godot.worker" {
     class JSWorker {
         constructor(path: string);
 
-        postMessage(message: any): void;
+        postMessage(message: any, transfer?: GArray | ReadonlyArray<NonNullable<GAny>>): void;
         terminate(): void;
 
         onready?: () => void;
@@ -14,6 +14,10 @@ declare module "godot.worker" {
         //TODO not implemented yet
         onerror?: (error: any) => void;
 
+        /**
+         * @deprecated Use onmessage to receive messages sent from postMessage() with transfers included.
+         * @param obj
+         */
         ontransfer?: (obj: GDObject) => void;
     }
 
@@ -23,9 +27,13 @@ declare module "godot.worker" {
         
         close(): void,
 
-        transfer(obj: GDObject): void,
+        /**
+         * @deprecated Use the transfer parameter of postMessage instead.
+         * @param obj
+         */
+        transfer(obj: GObject): void,
 
-        postMessage(message: any): void,
+        postMessage(message: any, transfer?: GArray | ReadonlyArray<NonNullable<GAny>>): void;
 
     } | undefined;
 
