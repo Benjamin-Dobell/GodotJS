@@ -152,7 +152,7 @@ namespace jsb
         } // end type template block scope
     }
 
-    void ObjectReflectBindingUtil::_godot_object_signal(const v8::FunctionCallbackInfo<v8::Value>& info)
+    void ObjectReflectBindingUtil::_godot_object_signal_get(const v8::FunctionCallbackInfo<v8::Value>& info)
     {
         v8::Isolate* isolate = info.GetIsolate();
         const v8::Local<v8::Context> context = isolate->GetCurrentContext();

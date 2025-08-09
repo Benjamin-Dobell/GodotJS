@@ -2,16 +2,16 @@
 
 declare module "godot-jsb" {
     import {
-        Callable,
-        MethodFlags,
-        MultiplayerAPI,
-        MultiplayerPeer,
-        Object as GObject,
-        PackedByteArray,
-        PropertyInfo,
-        StringName,
-        Variant,
-    } from "godot";
+    Callable,
+    MethodFlags,
+    MultiplayerAPI,
+    MultiplayerPeer,
+    Object as GObject,
+    PackedByteArray,
+    PropertyInfo, Signal,
+    StringName,
+    Variant,
+} from "godot";
 
     const CAMEL_CASE_BINDINGS_ENABLED: boolean;
 
@@ -104,7 +104,7 @@ declare module "godot-jsb" {
             transfer_channel?: number,
         }
 
-        function add_script_signal(target: any, name: string): void;
+        function add_script_signal(target: any, name: string): () => Signal;
         function add_script_property(target: any, details: ScriptPropertyInfo): void;
         function add_script_ready(target: any, details: { name: string, evaluator: string | OnReadyEvaluatorFunc }): void;
         function add_script_tool(target: any): void;

@@ -2,6 +2,7 @@
 #include "jsb_type_convert.h"
 #include "jsb_editor_utility_funcs.h"
 #include "jsb_callable.h"
+#include "jsb_object_bindings.h"
 
 namespace jsb
 {
@@ -483,6 +484,8 @@ namespace jsb
             JSB_LOG(VeryVerbose, "script %s define signal %s",
                 impl::Helper::to_string_opt(isolate, target->Get(context, jsb_name(environment, name))),
                 impl::Helper::to_string(isolate, signal));
+
+            info.GetReturnValue().Set(JSB_NEW_FUNCTION(context, ObjectReflectBindingUtil::_godot_object_signal_get, signal));
         }
     }
 

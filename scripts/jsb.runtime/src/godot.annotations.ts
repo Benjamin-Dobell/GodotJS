@@ -47,9 +47,36 @@ export type ClassDescriptor = Function | Symbol | EnumPlaceholder | TypePairPlac
  *
  */
 export function signal() {
-    return function (target: any, key: string) {
-        jsb.internal.add_script_signal(target, key);
-    }
+    return function(
+      target: unknown,
+      context: string | ClassAccessorDecoratorContext | ClassGetterDecoratorContext | ClassFieldDecoratorContext
+    ) {
+        if (typeof context === "string") {
+            // User's tsconfig is using legacy decorators (experimentalDecorators: true)
+            jsb.internal.add_script_signal(target, context);
+            return;
+        }
+
+        if (context.kind === 'accessor') {
+            return {
+                get: jsb.internal.add_script_signal(target, context.name),
+                set: () => {
+                    throw new Error(`Signal properties cannot be reassigned. Did you mean .connect() a callback instead?`);
+                }
+            };
+        } else if (context.kind === 'field') {
+            // add_script_signal will lead to a getter being added to the classes prototype. Any initialized field value
+            // will block access to the getter. So we delete field when we can.
+            context.addInitializer(function (this: any) {
+                delete this[context.name];
+            });
+            return jsb.internal.add_script_signal(target, context.name)();
+        } else if (context.kind === 'getter') {
+            return jsb.internal.add_script_signal(target, context.name);
+        } else {
+            throw new Error(`Signal decorators can not be used to decorate a ${(context as ClassMemberDecoratorContext).kind}. Decorating a \`declare readonly\` field is recommended.`);
+        }
+    };
 }
 
 export const ExportSignal = signal;
@@ -131,7 +158,7 @@ export const ExportDictionary = export_dictionary;
 function get_hint_string_for_enum(enum_type: any): string {
     const enum_vs: Array<string> = [];
     for (const key in enum_type) {
-		enum_vs.push(`${key}:${enum_type[key]}`);
+        enum_vs.push(`${key}:${enum_type[key]}`);
     }
     return enum_vs.join(",");
 }
@@ -203,9 +230,30 @@ export const ExportObject = export_object;
 /**
  * [low level export]
  */
+
 export function export_(type: Godot.Variant.Type, details?: { class_?: ClassDescriptor, hint?: Godot.PropertyHint, hint_string?: string, usage?: Godot.PropertyUsageFlags }) {
-    return function (target: any, key: string) {
-        let ebd = { name: key, type: type, hint: PropertyHint.PROPERTY_HINT_NONE, hint_string: "", usage: PropertyUsageFlags.PROPERTY_USAGE_DEFAULT };
+    return function(
+      target: unknown,
+      context:
+        | string
+        | ClassAccessorDecoratorContext
+        | ClassFieldDecoratorContext
+        | ClassGetterDecoratorContext
+        | ClassSetterDecoratorContext
+    ) {
+        const name = typeof context === 'object' ? context.name : context;
+
+        if (typeof name !== "string") {
+            throw new Error("Only properties with a string name/key can be exported");
+        }
+
+        const ebd = {
+            name,
+            type: type,
+            hint: PropertyHint.PROPERTY_HINT_NONE,
+            hint_string: "",
+            usage: PropertyUsageFlags.PROPERTY_USAGE_DEFAULT,
+        } satisfies GodotJsb.ScriptPropertyInfo;
 
         if (typeof details === "object") {
             if (typeof details.hint === "number") ebd.hint = details.hint;
@@ -244,12 +292,13 @@ export function export_(type: Godot.Variant.Type, details?: { class_?: ClassDesc
             } catch (e) {
                 if (ebd.hint === PropertyHint.PROPERTY_HINT_NONE) {
                     console.warn("the given parameters are not supported or not implemented (you need to give hint/hint_string/usage manually)",
-                        `class:${guess_type_name(Object.getPrototypeOf(target))} prop:${key} type:${type} class_:${guess_type_name(details.class_)}`);
+                      `class:${guess_type_name(Object.getPrototypeOf(target))} prop:${name} type:${type} class_:${guess_type_name(details.class_)}`);
                 }
             }
         }
+
         jsb.internal.add_script_property(target, ebd);
-    }
+    };
 }
 
 export function Export(type: Godot.Variant.Type, details?: { class?: ClassDescriptor, hint?: Godot.PropertyHint, hintString?: string, usage?: Godot.PropertyUsageFlags }) {
@@ -278,11 +327,26 @@ export const ExportVar = export_var;
  * NOTE only int value enums are allowed
  */
 export function export_enum(enum_type: any) {
-    return function (target: any, key: string) {
-        let hint_string = get_hint_string_for_enum(enum_type);
-        let ebd = { name: key, type: Variant.Type.TYPE_INT, hint: PropertyHint.PROPERTY_HINT_ENUM, hint_string: hint_string, usage: PropertyUsageFlags.PROPERTY_USAGE_DEFAULT };
+    return function (
+      target: any,
+      context: string | ClassAccessorDecoratorContext | ClassGetterDecoratorContext | ClassSetterDecoratorContext | ClassFieldDecoratorContext
+    ) {
+        const hint_string = get_hint_string_for_enum(enum_type);
+        const name = typeof context === 'object' ? context.name : context;
+
+        if (typeof name !== 'string') {
+            throw new Error("Only properties with a string name/key can be exported");
+        }
+
+        const ebd: GodotJsb.ScriptPropertyInfo = {
+            name,
+            type: Variant.Type.TYPE_INT,
+            hint: PropertyHint.PROPERTY_HINT_ENUM,
+            hint_string: hint_string,
+            usage: PropertyUsageFlags.PROPERTY_USAGE_DEFAULT,
+        };
         jsb.internal.add_script_property(target, ebd);
-    }
+    };
 }
 
 export const ExportEnum = export_enum;
@@ -291,17 +355,32 @@ export const ExportEnum = export_enum;
  * NOTE only int value enums are allowed
  */
 export function export_flags(enum_type: any) {
-    return function (target: any, key: string) {
-        let enum_vs: Array<string> = [];
+    return function (
+      target: any,
+      context: string | ClassAccessorDecoratorContext | ClassGetterDecoratorContext | ClassSetterDecoratorContext | ClassFieldDecoratorContext
+    ) {
+        const name = typeof context === 'object' ? context.name : context;
+
+        if (typeof name !== 'string') {
+            throw new Error("Only properties with a string name/key can be exported");
+        }
+
+        const enum_vs: Array<string> = [];
         for (let c in enum_type) {
             const v = enum_type[c];
             if (typeof v === "string" && enum_type[v] != 0) {
                 enum_vs.push(v + ":" + c);
             }
         }
-        let ebd = { name: key, type: Variant.Type.TYPE_INT, hint: PropertyHint.PROPERTY_HINT_FLAGS, hint_string: enum_vs.join(","), usage: PropertyUsageFlags.PROPERTY_USAGE_DEFAULT };
+        const ebd: GodotJsb.ScriptPropertyInfo = {
+            name,
+            type: Variant.Type.TYPE_INT,
+            hint: PropertyHint.PROPERTY_HINT_FLAGS,
+            hint_string: enum_vs.join(","),
+            usage: PropertyUsageFlags.PROPERTY_USAGE_DEFAULT,
+        };
         jsb.internal.add_script_property(target, ebd);
-    }
+    };
 }
 
 export const ExportFlags = export_flags;
@@ -314,23 +393,27 @@ export interface RPCConfig {
 }
 
 export function rpc(config?: RPCConfig) {
-    return function (target: any, propertyKey?: PropertyKey, descriptor?: PropertyDescriptor) {
-        if (typeof propertyKey !== "string") {
-            throw new Error("only string is allowed as propertyKey for rpc config");
-            return;
+    return function (
+      target: any,
+      context: string | ClassMethodDecoratorContext
+    ) {
+        const name = typeof context === 'object' ? context.name : context;
+
+        if (typeof name !== 'string') {
+            throw new Error("Only methods with a string name can be registered for RPC");
         }
 
         if (typeof config !== "undefined") {
-            jsb.internal.add_script_rpc(target, propertyKey, {
+            jsb.internal.add_script_rpc(target, name, {
                 mode: config.mode,
                 sync: typeof config.sync !== "undefined" ? (config.sync == "call_local") : undefined,
                 transfer_mode: config.transfer_mode,
                 transfer_channel: config.transfer_channel,
             });
         } else {
-            jsb.internal.add_script_rpc(target, propertyKey, {});
+            jsb.internal.add_script_rpc(target, name, {});
         }
-    }
+    };
 }
 
 export const Rpc = rpc;
@@ -340,10 +423,19 @@ export const Rpc = rpc;
  * @param evaluator for now, only string is accepted
  */
 export function onready(evaluator: string | GodotJsb.internal.OnReadyEvaluatorFunc) {
-    return function (target: any, key: string) {
-        let ebd = { name: key, evaluator: evaluator };
+    return function (
+      target: any,
+      context: string | ClassMethodDecoratorContext
+    ) {
+        const name = typeof context === 'object' ? context.name : context;
+
+        if (typeof name !== 'string') {
+            throw new Error("Only methods with a string name can be registered as an onready callback");
+        }
+
+        const ebd = { name, evaluator: evaluator };
         jsb.internal.add_script_ready(target, ebd);
-    }
+    };
 }
 
 export const OnReady = onready;
@@ -351,7 +443,7 @@ export const OnReady = onready;
 export function tool() {
     return function (target: any) {
         jsb.internal.add_script_tool(target);
-    }
+    };
 }
 
 export const Tool = tool;
@@ -359,46 +451,64 @@ export const Tool = tool;
 export function icon(path: string) {
     return function (target: any) {
         jsb.internal.add_script_icon(target, path);
-    }
+    };
 }
 
 export const Icon = icon;
 
 export function deprecated(message?: string) {
-    return function (target: any, propertyKey?: PropertyKey, descriptor?: PropertyDescriptor) {
-        if (typeof propertyKey === "undefined") {
+    return function (target: any, context: string | DecoratorContext) {
+        const name = typeof context === "object" ? context.name : context;
+
+        if (typeof name === "undefined") {
             jsb.internal.set_script_doc(target, undefined, 0, message ?? "");
             return;
         }
-        if (typeof propertyKey !== "string" || propertyKey.length == 0) throw new Error("only string key is allowed for doc");
-        jsb.internal.set_script_doc(target, propertyKey, 0, message ?? "");
-    }
+
+        if (typeof name !== "string" || !name) {
+            throw new Error("Only methods/properties with a string name/key can be marked as deprecated");
+        }
+
+        jsb.internal.set_script_doc(target, name, 0, message ?? "");
+    };
 }
 
 export const Deprecated = deprecated;
 
 export function experimental(message?: string) {
-    return function (target: any, propertyKey?: PropertyKey, descriptor?: PropertyDescriptor) {
-        if (typeof propertyKey === "undefined") {
+    return function (target: any, context: string | DecoratorContext) {
+        const name = typeof context === "object" ? context.name : context;
+
+        if (typeof name === "undefined") {
             jsb.internal.set_script_doc(target, undefined, 1, message ?? "");
             return;
         }
-        if (typeof propertyKey !== "string" || propertyKey.length == 0) throw new Error("only string key is allowed for doc");
-        jsb.internal.set_script_doc(target, propertyKey, 1, message ?? "");
-    }
+
+        if (typeof name !== "string" || !name) {
+            throw new Error("Only methods/properties with a string name/key can be marked as experimental");
+        }
+
+        jsb.internal.set_script_doc(target, name, 1, message ?? "");
+    };
 }
 
 export const Experimental = experimental;
 
 export function help(message?: string) {
-    return function (target: any, propertyKey?: PropertyKey, descriptor?: PropertyDescriptor) {
-        if (typeof propertyKey === "undefined") {
+    return function (target: any, context: string | DecoratorContext) {
+        const name = typeof context === "object" ? context.name : context;
+
+        if (typeof name === "undefined") {
             jsb.internal.set_script_doc(target, undefined, 2, message ?? "");
             return;
         }
-        if (typeof propertyKey !== "string" || propertyKey.length == 0) throw new Error("only string key is allowed for doc");
-        jsb.internal.set_script_doc(target, propertyKey, 2, message ?? "");
-    }
+
+        if (typeof name !== "string" || !name) {
+            throw new Error("Only methods/properties with a string name/key can be decorated with a help string");
+        }
+
+        jsb.internal.set_script_doc(target, name, 2, message ?? "");
+    };
 }
 
 export const Help = help;
