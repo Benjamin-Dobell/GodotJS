@@ -12,10 +12,12 @@ import type {
     Variant,
 } from "godot";
 
+import type * as Godot from "godot";
 import type * as GodotJsb from "godot-jsb";
-const godot = require("godot.lib.api");
 
-const jsb = godot.jsb;
+const godot: typeof Godot = require("godot.lib.api");
+const jsb: typeof GodotJsb = require("godot.lib.api").jsb;
+
 const gd_to_string = godot.str;
 const names = jsb.internal.names;
 
@@ -1170,9 +1172,13 @@ export type FunctionLiteralTypeDescriptor = GDictionary<{
     returns?: TypeDescriptor;
 }>;
 
+export type OptionalTypeDescriptor<Descriptor extends GDictionary> = Descriptor extends GDictionary<infer T>
+  ? GDictionary<T & { optional?: boolean }>
+  : never;
+
 export type ObjectLiteralTypeDescriptor = GDictionary<{
     type: DescriptorType.ObjectLiteral;
-    properties?: GDictionary<Partial<Record<string, TypeDescriptor>>>;
+    properties?: GDictionary<Partial<Record<string, OptionalTypeDescriptor<TypeDescriptor>>>>;
     index?: GDictionary<{
         key: TypeDescriptor;
         value: TypeDescriptor;
@@ -1285,6 +1291,505 @@ export type ScriptResourceTypeDescriptorCodeGenRequest = GDictionary<{
     resource: Resource;
 }>;
 
+// These types are dynamically generated so that these runtime types support camel-case bindings. Unfortunately, this
+// doesn't scale very well. If we find ourselves adding/editing these often, then we should consider shipping two sets
+// of runtime types instead of generating them on the fly. However, we'd need to use something like ts-morph to convert
+// the snake_case .d.ts to camelCase. With TS7/tsgo on the horizon, there are additional concerns with that approach.
+const annotation_types = {
+    ExportOptions: godot.GDictionary.create({
+        type: DescriptorType.ObjectLiteral,
+        properties: {
+            class: {
+                type: DescriptorType.Godot,
+                name: "any",
+                optional: true,
+            },
+            hint: {
+                type: DescriptorType.Godot,
+                name: "PropertyHint",
+                optional: true,
+            },
+            [names.get_member('hint_string')]: {
+                type: DescriptorType.Godot,
+                name: "string",
+                optional: true,
+            },
+            usage: {
+                type: DescriptorType.Godot,
+                name: "PropertyUsageFlags",
+                optional: true,
+            },
+        },
+    }) satisfies ObjectLiteralTypeDescriptor,
+    ClassBinder: godot.GDictionary.create({
+        type: DescriptorType.Intersection,
+        types: [
+            {
+                type: DescriptorType.FunctionLiteral,
+                parameters: [],
+                returns: {
+                    type: DescriptorType.FunctionLiteral,
+                    parameters: [
+                        { name: "target", type: { type: DescriptorType.Godot, name: "GObjectConstructor" } },
+                        {
+                            name: "context",
+                            type: { type: DescriptorType.Godot, name: "ClassDecoratorContext" },
+                        },
+                    ],
+                },
+            },
+            {
+                type: DescriptorType.ObjectLiteral,
+                properties: {
+                    tool: {
+                        type: DescriptorType.FunctionLiteral,
+                        parameters: [],
+                        returns: {
+                            type: DescriptorType.FunctionLiteral,
+                            parameters: [
+                                { name: "target", type: { type: DescriptorType.Godot, name: "GObjectConstructor" } },
+                                {
+                                    name: "_context",
+                                    type: { type: DescriptorType.Godot, name: "ClassDecoratorContext" },
+                                },
+                            ],
+                        },
+                    },
+                    icon: {
+                        type: DescriptorType.FunctionLiteral,
+                        parameters: [
+                            { name: "path", type: { type: DescriptorType.Godot, name: "string" } },
+                        ],
+                        returns: {
+                            type: DescriptorType.FunctionLiteral,
+                            parameters: [
+                                { name: "target", type: { type: DescriptorType.Godot, name: "GObjectConstructor" } },
+                                {
+                                    name: "_context",
+                                    type: { type: DescriptorType.Godot, name: "ClassDecoratorContext" },
+                                },
+                            ],
+                        },
+                    },
+                    export: {
+                        type: DescriptorType.Intersection,
+                        types: [
+                            {
+                                type: DescriptorType.FunctionLiteral,
+                                parameters: [
+                                    { name: "type", type: { type: DescriptorType.Godot, name: "Godot.Variant.Type" } },
+                                    {
+                                        name: "options",
+                                        type: { type: DescriptorType.Godot, name: "ExportOptions" },
+                                        optional: true,
+                                    },
+                                ],
+                                returns: { type: DescriptorType.Godot, name: "ClassMemberDecorator" },
+                            },
+                            {
+                                type: DescriptorType.ObjectLiteral,
+                                properties: {
+                                    multiline: {
+                                        type: DescriptorType.FunctionLiteral,
+                                        parameters: [],
+                                        returns: { type: DescriptorType.Godot, name: "ClassMemberDecorator" },
+                                    },
+                                    range: {
+                                        type: DescriptorType.FunctionLiteral,
+                                        parameters: [
+                                            { name: "min", type: { type: DescriptorType.Godot, name: "number" } },
+                                            { name: "max", type: { type: DescriptorType.Godot, name: "number" } },
+                                            { name: "step", type: { type: DescriptorType.Godot, name: "number" } },
+                                            {
+                                                name: "...extra_hints",
+                                                type: { type: DescriptorType.Godot, name: "string[]" },
+                                            },
+                                        ],
+                                        returns: { type: DescriptorType.Godot, name: "ClassMemberDecorator" },
+                                    },
+                                    [names.get_member("range_int")]: {
+                                        type: DescriptorType.FunctionLiteral,
+                                        parameters: [
+                                            { name: "min", type: { type: DescriptorType.Godot, name: "number" } },
+                                            { name: "max", type: { type: DescriptorType.Godot, name: "number" } },
+                                            { name: "step", type: { type: DescriptorType.Godot, name: "number" } },
+                                            {
+                                                name: "...extra_hints",
+                                                type: { type: DescriptorType.Godot, name: "string[]" },
+                                            },
+                                        ],
+                                        returns: { type: DescriptorType.Godot, name: "ClassMemberDecorator" },
+                                    },
+                                    file: {
+                                        type: DescriptorType.FunctionLiteral,
+                                        parameters: [{
+                                            name: "filter",
+                                            type: { type: DescriptorType.Godot, name: "string" },
+                                        }],
+                                        returns: { type: DescriptorType.Godot, name: "ClassMemberDecorator" },
+                                    },
+                                    dir: {
+                                        type: DescriptorType.FunctionLiteral,
+                                        parameters: [{
+                                            name: "filter",
+                                            type: { type: DescriptorType.Godot, name: "string" },
+                                        }],
+                                        returns: { type: DescriptorType.Godot, name: "ClassMemberDecorator" },
+                                    },
+                                    [names.get_member("global_file")]: {
+                                        type: DescriptorType.FunctionLiteral,
+                                        parameters: [{
+                                            name: "filter",
+                                            type: { type: DescriptorType.Godot, name: "string" },
+                                        }],
+                                        returns: { type: DescriptorType.Godot, name: "ClassMemberDecorator" },
+                                    },
+                                    [names.get_member("global_dir")]: {
+                                        type: DescriptorType.FunctionLiteral,
+                                        parameters: [{
+                                            name: "filter",
+                                            type: { type: DescriptorType.Godot, name: "string" },
+                                        }],
+                                        returns: { type: DescriptorType.Godot, name: "ClassMemberDecorator" },
+                                    },
+                                    [names.get_member("exp_easing")]: {
+                                        type: DescriptorType.FunctionLiteral,
+                                        parameters: [
+                                            {
+                                                name: "hint",
+                                                optional: true,
+                                                type: {
+                                                    type: DescriptorType.Union,
+                                                    types: [
+                                                        { type: DescriptorType.StringLiteral, value: "" },
+                                                        { type: DescriptorType.StringLiteral, value: "attenuation" },
+                                                        { type: DescriptorType.StringLiteral, value: "positive_only" },
+                                                        {
+                                                            type: DescriptorType.StringLiteral,
+                                                            value: "attenuation,positive_only",
+                                                        },
+                                                    ],
+                                                },
+                                            },
+                                        ],
+                                        returns: { type: DescriptorType.Godot, name: "ClassMemberDecorator" },
+                                    },
+                                    array: {
+                                        type: DescriptorType.FunctionLiteral,
+                                        parameters: [
+                                            {
+                                                name: "clazz",
+                                                type: { type: DescriptorType.Godot, name: "ClassSpecifier" },
+                                            },
+                                        ],
+                                        returns: { type: DescriptorType.Godot, name: "ClassMemberDecorator" },
+                                    },
+                                    dictionary: {
+                                        type: DescriptorType.FunctionLiteral,
+                                        parameters: [
+                                            {
+                                                name: "key_class",
+                                                type: { type: DescriptorType.Godot, name: "VariantConstructor" },
+                                            },
+                                            {
+                                                name: "value_class",
+                                                type: { type: DescriptorType.Godot, name: "VariantConstructor" },
+                                            },
+                                        ],
+                                        returns: { type: DescriptorType.Godot, name: "ClassMemberDecorator" },
+                                    },
+                                    object: {
+                                        type: DescriptorType.FunctionLiteral,
+                                        generics: [
+                                            {
+                                                name: "Constructor",
+                                                extends: { type: DescriptorType.Godot, name: "GObjectConstructor" },
+                                            },
+                                        ],
+                                        parameters: [
+                                            { name: "clazz", type: { type: DescriptorType.Godot, name: "Constructor" } },
+                                        ],
+                                        returns: {
+                                            type: DescriptorType.Godot,
+                                            name: "ClassMemberDecorator",
+                                            arguments: [{
+                                                type: DescriptorType.Godot,
+                                                name: "ClassValueMemberDecoratorContext",
+                                                arguments: [
+                                                    { type: DescriptorType.Godot, name: "unknown" },
+                                                    {
+                                                        type: DescriptorType.Union,
+                                                        types: [
+                                                            { type: DescriptorType.Godot, name: "null" },
+                                                            {
+                                                                type: DescriptorType.Godot,
+                                                                name: "InstanceType",
+                                                                arguments: [{
+                                                                    type: DescriptorType.Godot,
+                                                                    name: "Constructor",
+                                                                }],
+                                                            },
+                                                        ],
+                                                    },
+                                                ],
+                                            }],
+                                        },
+                                    },
+                                    enum: {
+                                        type: DescriptorType.FunctionLiteral,
+                                        parameters: [{
+                                            name: "enum_type",
+                                            type: {
+                                                type: DescriptorType.Godot,
+                                                name: "Record",
+                                                arguments: [
+                                                    { type: DescriptorType.Godot, name: "string" },
+                                                    {
+                                                        type: DescriptorType.Union,
+                                                        types: [
+                                                            { type: DescriptorType.Godot, name: "string" },
+                                                            { type: DescriptorType.Godot, name: "number" },
+                                                        ],
+                                                    },
+                                                ],
+                                            },
+                                        }],
+                                        returns: { type: DescriptorType.Godot, name: "ClassMemberDecorator" },
+                                    },
+                                    flags: {
+                                        type: DescriptorType.FunctionLiteral,
+                                        parameters: [{
+                                            name: "enum_type",
+                                            type: {
+                                                type: DescriptorType.Godot,
+                                                name: "Record",
+                                                arguments: [
+                                                    { type: DescriptorType.Godot, name: "string" },
+                                                    {
+                                                        type: DescriptorType.Union,
+                                                        types: [
+                                                            { type: DescriptorType.Godot, name: "string" },
+                                                            { type: DescriptorType.Godot, name: "number" },
+                                                        ],
+                                                    },
+                                                ],
+                                            },
+                                        }],
+                                        returns: { type: DescriptorType.Godot, name: "ClassMemberDecorator" },
+                                    },
+                                    cache: {
+                                        type: DescriptorType.FunctionLiteral,
+                                        parameters: [],
+                                        returns: {
+                                            type: DescriptorType.Godot,
+                                            name: "ClassMemberDecorator",
+                                            arguments: [{
+                                                type: DescriptorType.Union,
+                                                types: [
+                                                    {
+                                                        type: DescriptorType.Godot,
+                                                        name: "ClassAccessorDecoratorContext",
+                                                        arguments: [{
+                                                            type: DescriptorType.Godot,
+                                                            name: "Godot.Object",
+                                                        }],
+                                                    },
+                                                    {
+                                                        type: DescriptorType.Godot,
+                                                        name: "ClassSetterDecoratorContext",
+                                                        arguments: [{
+                                                            type: DescriptorType.Godot,
+                                                            name: "Godot.Object",
+                                                        }],
+                                                    },
+                                                ],
+                                            }],
+                                        },
+                                    },
+                                },
+                            },
+                        ],
+                    },
+                    signal: {
+                        type: DescriptorType.FunctionLiteral,
+                        parameters: [],
+                        returns: {
+                            type: DescriptorType.FunctionLiteral,
+                            generics: [{
+                                name: "Context",
+                                extends: {
+                                    type: DescriptorType.Union,
+                                    types: [
+                                        {
+                                            type: DescriptorType.Godot,
+                                            name: "ClassAccessorDecoratorContext",
+                                            arguments: [{
+                                                type: DescriptorType.Godot,
+                                                name: "Godot.Object",
+                                            }, { type: DescriptorType.Godot, name: "Godot.Signal" }],
+                                        },
+                                        {
+                                            type: DescriptorType.Godot,
+                                            name: "ClassGetterDecoratorContext",
+                                            arguments: [{
+                                                type: DescriptorType.Godot,
+                                                name: "Godot.Object",
+                                            }, { type: DescriptorType.Godot, name: "Godot.Signal" }],
+                                        },
+                                        {
+                                            type: DescriptorType.Godot,
+                                            name: "ClassFieldDecoratorContext",
+                                            arguments: [{
+                                                type: DescriptorType.Godot,
+                                                name: "Godot.Object",
+                                            }, { type: DescriptorType.Godot, name: "Godot.Signal" }],
+                                        },
+                                    ],
+                                },
+                            }],
+                            parameters: [
+                                { name: "_target", type: { type: DescriptorType.Godot, name: "unknown" } },
+                                { name: "context", type: { type: DescriptorType.Godot, name: "Context" } },
+                            ],
+                            returns: {
+                                type: DescriptorType.Godot,
+                                name: "ClassMemberDecoratorReturn",
+                                arguments: [{ type: DescriptorType.Godot, name: "Context" }],
+                            },
+                        },
+                    },
+                    rpc: {
+                        type: DescriptorType.FunctionLiteral,
+                        parameters: [
+                            { name: "config", type: { type: DescriptorType.Godot, name: "RPCConfig" }, optional: true },
+                        ],
+                        returns: {
+                            type: DescriptorType.FunctionLiteral,
+                            parameters: [
+                                { name: "_target", type: { type: DescriptorType.Godot, name: "Function" } },
+                                {
+                                    name: "context",
+                                    type: {
+                                        type: DescriptorType.Union,
+                                        types: [{
+                                            type: DescriptorType.Godot,
+                                            name: "string",
+                                        }, { type: DescriptorType.Godot, name: "ClassMethodDecoratorContext" }],
+                                    },
+                                },
+                            ],
+                        },
+                    },
+                    onready: {
+                        type: DescriptorType.FunctionLiteral,
+                        parameters: [{
+                            name: "evaluator",
+                            type: {
+                                type: DescriptorType.Union,
+                                types: [
+                                    { type: DescriptorType.Godot, name: "string" },
+                                    { type: DescriptorType.Godot, name: "GodotJsb.internal.OnReadyEvaluatorFunc" },
+                                ],
+                            },
+                        }],
+                        returns: {
+                            type: DescriptorType.FunctionLiteral,
+                            parameters: [
+                                { name: "_target", type: { type: DescriptorType.Godot, name: "undefined" } },
+                                {
+                                    name: "context",
+                                    type: {
+                                        type: DescriptorType.Union,
+                                        types: [{
+                                            type: DescriptorType.Godot,
+                                            name: "string",
+                                        }, { type: DescriptorType.Godot, name: "ClassMethodDecoratorContext" }],
+                                    },
+                                },
+                            ],
+                        },
+                    },
+                    deprecated: {
+                        type: DescriptorType.FunctionLiteral,
+                        parameters: [
+                            { name: "message", type: { type: DescriptorType.Godot, name: "string" }, optional: true },
+                        ],
+                        returns: {
+                            type: DescriptorType.Godot,
+                            name: "Decorator",
+                            arguments: [{
+                                type: DescriptorType.Union,
+                                types: [
+                                    {
+                                        type: DescriptorType.Godot,
+                                        name: "ClassDecoratorContext",
+                                        arguments: [{ type: DescriptorType.Godot, name: "GObjectConstructor" }],
+                                    },
+                                    {
+                                        type: DescriptorType.Godot,
+                                        name: "ClassValueMemberDecoratorContext",
+                                        arguments: [{ type: DescriptorType.Godot, name: "GObjectConstructor" }],
+                                    },
+                                ],
+                            }],
+                        },
+                    },
+                    experimental: {
+                        type: DescriptorType.FunctionLiteral,
+                        parameters: [
+                            { name: "message", type: { type: DescriptorType.Godot, name: "string" }, optional: true },
+                        ],
+                        returns: {
+                            type: DescriptorType.Godot,
+                            name: "Decorator",
+                            arguments: [{
+                                type: DescriptorType.Union,
+                                types: [
+                                    {
+                                        type: DescriptorType.Godot,
+                                        name: "ClassDecoratorContext",
+                                        arguments: [{ type: DescriptorType.Godot, name: "GObjectConstructor" }],
+                                    },
+                                    {
+                                        type: DescriptorType.Godot,
+                                        name: "ClassValueMemberDecoratorContext",
+                                        arguments: [{ type: DescriptorType.Godot, name: "GObjectConstructor" }],
+                                    },
+                                ],
+                            }],
+                        },
+                    },
+                    help: {
+                        type: DescriptorType.FunctionLiteral,
+                        parameters: [
+                            { name: "message", type: { type: DescriptorType.Godot, name: "string" }, optional: true },
+                        ],
+                        returns: {
+                            type: DescriptorType.Godot,
+                            name: "Decorator",
+                            arguments: [{
+                                type: DescriptorType.Union,
+                                types: [
+                                    {
+                                        type: DescriptorType.Godot,
+                                        name: "ClassDecoratorContext",
+                                        arguments: [{ type: DescriptorType.Godot, name: "GObjectConstructor" }],
+                                    },
+                                    {
+                                        type: DescriptorType.Godot,
+                                        name: "ClassValueMemberDecoratorContext",
+                                        arguments: [{ type: DescriptorType.Godot, name: "GObjectConstructor" }],
+                                    },
+                                ],
+                            }],
+                        },
+                    },
+                },
+            },
+        ],
+    }) satisfies IntersectionTypeDescriptor,
+};
+
 export type CodeGenRequest = ScriptNodeTypeDescriptorCodeGenRequest | ScriptResourceTypeDescriptorCodeGenRequest;
 
 /**
@@ -1311,6 +1816,10 @@ class TypeDescriptorWriter extends BufferingWriter {
     serialize_type_descriptor(descriptor: GReadProxyValueWrap<TypeDescriptor>): void {
         switch (descriptor.type) {
             case DescriptorType.Godot: {
+                if (!descriptor.name) {
+                    throw new Error("Invalid User type descriptor: missing name");
+                }
+
                 if (descriptor.arguments?.length) {
                     this.line(`${descriptor.name}<`);
                     const multiline = descriptor.arguments.length > 1
@@ -1334,6 +1843,10 @@ class TypeDescriptorWriter extends BufferingWriter {
                 break;
             }
             case DescriptorType.User: {
+                if (!descriptor.name) {
+                    throw new Error("Invalid User type descriptor: missing name");
+                }
+
                 if (descriptor.arguments) {
                     this.line(`${descriptor.name}<`);
                     const multiline = descriptor.arguments.length > 1
@@ -1456,7 +1969,7 @@ class TypeDescriptorWriter extends BufferingWriter {
                         return;
                     }
 
-                    indent.line(`${name_string(key)}: `);
+                    indent.line(`${name_string(key)}${value.optional ? '?' : ''}: `);
                     const prop_writer = new TypeDescriptorWriter(indent, true);
                     prop_writer.serialize_type_descriptor(value);
                     prop_writer.finish();
@@ -2591,6 +3104,39 @@ export class TSDCodeGen {
                 cg.line(mi.method);
             });
         }
+
+        tasks.add_task("jsb.runtime", () => {
+            const path = "/jsb.runtime.gen.d.ts";
+            const dir_path = this._out_dir + path;
+            const file = godot.FileAccess.open(dir_path, godot.FileAccess.ModeFlags.WRITE);
+
+            if (!file) {
+                throw new Error(`failed to open file for writing: ${dir_path}`);
+            }
+
+            const runtime_gen = new FileWriter(dir_path, this._types, file);
+
+            try {
+                const module = new ModuleWriter(
+                    runtime_gen,
+                    "godot.annotations"
+                );
+
+                module.line('import * as Godot from "godot";');
+
+                for (const [name, descriptor] of Object.entries(annotation_types)) {
+                    module.line(`type ${names.get_class(name)} = `)
+                    const type_descriptor = new TypeDescriptorWriter(module, true);
+                    type_descriptor.serialize_type_descriptor(descriptor.proxy());
+                    type_descriptor.finish();
+                }
+
+                module.finish();
+                runtime_gen.finish();
+            } finally {
+                file.close();
+            }
+        })
 
         tasks.add_task("Cleanup", () => {
             this._splitter?.close();
