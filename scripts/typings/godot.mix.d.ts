@@ -101,6 +101,39 @@ declare module "godot" {
 
     type UndefinedToNull<T> = T extends undefined ? null : T;
 
+    // A bit convoluted, but written this way to mitigate type definitions circularly depending on themselves.
+    type GodotNames<T> = '__godotNameMap' extends keyof T
+      ? T['__godotNameMap'][keyof T['__godotNameMap']] | Exclude<keyof T, keyof T['__godotNameMap']>
+      : keyof T;
+    type ResolveGodotName<T, Name> = Name extends keyof T
+      ? Name
+      : '__godotNameMap' extends keyof T
+        ? ExtractValueKeys<T['__godotNameMap'], Name>
+        : never;
+
+    /**
+     * Godot has many APIs that are a form of dynamic dispatch, i.e., they take the name of a function or property and
+     * then operate on the value matching the name. TypeScript is powerful enough to allow us to type these APIs.
+     * However, since these APIs can be used to call each other, the type checker can get hung up trying to infinitely
+     * recurse on these types. What follows is an interface with the built-in dynamic dispatch names. GodotJS' types
+     * will not recurse through methods matching these names. If you want to build your own dynamic dispatch APIs, you
+     * can use interface merging to insert additional method names.
+     */
+    interface GodotDynamicDispatchNames {
+      call: 'call';
+      callv: 'callv';
+      call_deferred: 'call_deferred';
+      add_do_method: 'add_do_method';
+      add_undo_method: 'add_undo_method';
+    }
+    type GodotDynamicDispatchName = GodotDynamicDispatchNames[keyof GodotDynamicDispatchNames];
+
+    type ResolveGodotNameParameters<T, Name> = Name extends GodotDynamicDispatchName
+      ? ResolveGodotName<Name> extends keyof T
+        ? GAny[]
+        : never
+      : T[ResolveGodotName<T, Name>] extends { bivarianceHack(...args: infer P extends GAny[]): void | GAny }["bivarianceHack"] ? P : never;
+
     /**
      * This namespace and the values within do not exist at runtime. They're declared here, for internal use only, as a
      * work-around for limitations of TypeScript's type system.
@@ -196,9 +229,9 @@ declare module "godot" {
 
     type AnimationMixerPathMap = PathMap<AnimationLibrary>;
     type StaticAnimationMixerPath<Map extends AnimationMixerPathMap> =
-        StaticPath<Map, Animation, "", typeof __PathMappableDummyKeys['AnimationLibrary' | 'AnimationMixer']>;
+        StaticPath<Map, Animation, "", typeof __PathMappableDummyKeys["AnimationLibrary" | "AnimationMixer"]>;
     type ResolveAnimationMixerPath<Map extends AnimationMixerPathMap, Path extends string, Default = never> =
-        ResolvePath<Map, Path, Default, Animation, "", typeof __PathMappableDummyKeys['AnimationLibrary' | 'AnimationMixer']>;
+        ResolvePath<Map, Path, Default, Animation, "", typeof __PathMappableDummyKeys["AnimationLibrary" | "AnimationMixer"]>;
 
     type GArrayElement<T extends GAny | GAny[], I extends int64 = int64> = T extends any[]
         ? T[I]
@@ -270,7 +303,7 @@ declare module "godot" {
 
     type GWrappableValue = GAny | GWrappableValue[] | { [key: string]: GWrappableValue };
     type GValueWrapUnchecked<V> = V extends any[]
-        ? V extends (number extends V['length'] ? [] : any[])
+        ? V extends (number extends V["length"] ? [] : any[])
             ? GArray<{ [I in keyof V]: GValueWrapUnchecked<V[I]> }>
             : GArray<GValueWrapUnchecked<V[number]>>
         : V extends GAny
@@ -290,7 +323,7 @@ declare module "godot" {
      * Semi-workaround for https://github.com/microsoft/TypeScript/issues/43826.
      * @see GReadProxyValueWrap
      */
-    type GArrayReadProxy<T> = Omit<GArrayProxy<T>, 'forEach'> & {
+    type GArrayReadProxy<T> = Omit<GArrayProxy<T>, "forEach"> & {
         [Symbol.iterator](): IteratorObject<GReadProxyValueWrap<T>>;
         forEach<S = GArrayReadProxy<T>>(callback: (this: GArrayReadProxy<T>, value: GReadProxyValueWrap<T>, index: number) => void, thisArg?: S): void;
         [n: number]: GReadProxyValueWrap<T>;
