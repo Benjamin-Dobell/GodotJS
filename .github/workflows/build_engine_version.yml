@@ -1,0 +1,114 @@
+name: ⚙️ Build Godot Version with GodotJS
+on:
+  workflow_call:
+    inputs:
+      publish:
+        description: "Should publish"
+        required: true
+        type: string
+      version:
+        description: "Godot engine version"
+        required: true
+        type: string
+      version_ref:
+        description: "Godot engine commit reference"
+        required: true
+        type: string
+      v8:
+        description: "V8 version"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  android-build:
+    name: 🤖 Android
+    uses: ./.github/workflows/build_android.yml
+    with:
+      version: ${{ inputs.version }}
+      version_ref: ${{ inputs.version_ref }}
+
+  ios-build:
+    name: 🍏 iOS
+    uses: ./.github/workflows/build_ios.yml
+    with:
+      version: ${{ inputs.version }}
+      version_ref: ${{ inputs.version_ref }}
+
+  linux-build:
+    name: 🐧 Linux
+    uses: ./.github/workflows/build_linux.yml
+    with:
+      version: ${{ inputs.version }}
+      version_ref: ${{ inputs.version_ref }}
+
+  macos-build:
+    name: 🍎 macOS
+    uses: ./.github/workflows/build_macos.yml
+    with:
+      version: ${{ inputs.version }}
+      version_ref: ${{ inputs.version_ref }}
+
+  windows-build:
+    name: 🏁 Windows
+    uses: ./.github/workflows/build_windows.yml
+    with:
+      version: ${{ inputs.version }}
+      version_ref: ${{ inputs.version_ref }}
+
+  web-build:
+    name: 🌐 Web
+    uses: ./.github/workflows/build_web.yml
+    with:
+      version: ${{ inputs.version }}
+      version_ref: ${{ inputs.version_ref }}
+
+  checks-done:
+    if: ${{ always() }}
+    name: ✅ Check builds
+    runs-on: ubuntu-latest
+    steps:
+      - name: 🎉 Checks done
+        run: |
+          resultWebBuild="${{ needs.web-build.result }}"
+          resultWindowsBuild="${{ needs.windows-build.result }}"          
+          resultMacosBuild="${{ needs.macos-build.result }}"
+          resultLinuxBuild="${{ needs.linux-build.result }}"
+          resultIosBuild="${{ needs.ios-build.result }}"
+          resultAndroidBuild="${{ needs.android-build.result }}"
+          if [[ 
+            $resultWebBuild == "success" && 
+            $resultWindowsBuild == "success" && 
+            $resultMacosBuild == "success" && 
+            $resultLinuxBuild == "success" && 
+            $resultIosBuild == "success" && 
+            $resultAndroidBuild == "success" 
+          ]]; 
+          then
+            echo "🎉 All builds were successful."
+            exit 0
+          else
+            echo "😥 Some builds were failing."
+            exit 1
+          fi
+    needs:
+      [
+        web-build,
+        windows-build,
+        macos-build,
+        linux-build,
+        ios-build,
+        android-build,
+      ]
+
+  release:
+    name: 🦅 Release
+    if: inputs.publish == 'true' && github.event_name != 'pull_request'
+    needs: [checks-done]
+    uses: ./.github/workflows/misc_release.yml
+    secrets: inherit
+    with:
+      version: ${{ inputs.version }}
+      v8: ${{ inputs.v8 }}
