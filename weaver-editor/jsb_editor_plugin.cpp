@@ -7,6 +7,8 @@
 
 #if GODOT_4_7_OR_NEWER
 #include "core/object/callable_mp.h"
+#include "scene/main/scene_tree.h"
+#include "servers/display/display_server.h"
 #endif
 
 #define JSB_TYPE_ROOT "typings"
