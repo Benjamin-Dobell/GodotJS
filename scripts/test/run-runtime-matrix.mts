@@ -415,6 +415,10 @@ interface CdpPipeMessage {
     sessionId?: string;
 }
 
+const CDP_DEFAULT_REQUEST_TIMEOUT_MS = 15000;
+const CDP_STARTUP_PROBE_TIMEOUT_MS = 2500;
+const CDP_STARTUP_PROBE_INTERVAL_MS = 250;
+
 class CdpPipeClient {
     private readonly browser: ReturnType<typeof spawn>;
     private readonly requestTimeoutMs: number;
@@ -436,7 +440,7 @@ class CdpPipeClient {
         browser: ReturnType<typeof spawn>,
         pipeRead: NodeJS.ReadableStream,
         pipeWrite: NodeJS.WritableStream,
-        requestTimeoutMs = 15000,
+        requestTimeoutMs = CDP_DEFAULT_REQUEST_TIMEOUT_MS,
     ) {
         this.browser = browser;
         this.pipeRead = pipeRead;
@@ -469,7 +473,12 @@ class CdpPipeClient {
         };
     }
 
-    async send(method: string, params: Record<string, any> = {}, sessionId?: string): Promise<Record<string, any>> {
+    async send(
+        method: string,
+        params: Record<string, any> = {},
+        sessionId?: string,
+        requestTimeoutMs = this.requestTimeoutMs,
+    ): Promise<Record<string, any>> {
         if (this.closed) {
             throw this.closeError ?? new Error(`cdp connection is closed (method: ${method})`);
         }
@@ -485,7 +494,7 @@ class CdpPipeClient {
             const timeout = setTimeout(() => {
                 this.pending.delete(id);
                 reject(new Error(`cdp request timed out for method: ${method}`));
-            }, this.requestTimeoutMs);
+            }, requestTimeoutMs);
 
             this.pending.set(id, { resolve, reject, timeout, method });
 
@@ -577,6 +586,139 @@ class CdpPipeClient {
     }
 }
 
+type CdpTransportMode = "fd3-fd4" | "stdin-stdout";
+
+interface BrowserCdpContext {
+    browser: ReturnType<typeof spawn>;
+    cdp: CdpPipeClient;
+    transport: CdpTransportMode;
+    browserErrorTail: string[];
+}
+
+function attachBrowserStderrCapture(browser: ReturnType<typeof spawn>, browserErrorTail: string[]) {
+    browser.stderr?.setEncoding("utf-8");
+    browser.stderr?.on("data", (chunk: string | Buffer) => {
+        const text = typeof chunk === "string" ? chunk : chunk.toString("utf-8");
+        for (const line of text.split(/\r?\n/)) {
+            const trimmed = line.trim();
+            if (!trimmed) {
+                continue;
+            }
+            browserErrorTail.push(trimmed);
+            if (browserErrorTail.length > 80) {
+                browserErrorTail.shift();
+            }
+        }
+    });
+}
+
+function formatBrowserStderrTail(browserErrorTail: string[]) {
+    return browserErrorTail.length > 0
+        ? `\nBrowser stderr tail:\n${browserErrorTail.slice(-200).join("\n")}`
+        : "";
+}
+
+function getCdpStreamsForTransport(browser: ReturnType<typeof spawn>, transport: CdpTransportMode) {
+    if (transport === "fd3-fd4") {
+        const cdpWrite = browser.stdio[3];
+        const cdpRead = browser.stdio[4];
+
+        if (!cdpWrite || typeof (cdpWrite as { write?: unknown }).write !== "function") {
+            throw new Error("browser process missing writable CDP pipe fd 3");
+        }
+
+        if (!cdpRead || typeof (cdpRead as { on?: unknown }).on !== "function") {
+            throw new Error("browser process missing readable CDP pipe fd 4");
+        }
+
+        return {
+            cdpRead: cdpRead as NodeJS.ReadableStream,
+            cdpWrite: cdpWrite as NodeJS.WritableStream,
+        };
+    }
+
+    if (!browser.stdin || typeof (browser.stdin as { write?: unknown }).write !== "function") {
+        throw new Error("browser process missing writable stdin for CDP");
+    }
+
+    if (!browser.stdout || typeof (browser.stdout as { on?: unknown }).on !== "function") {
+        throw new Error("browser process missing readable stdout for CDP");
+    }
+
+    return {
+        cdpRead: browser.stdout as NodeJS.ReadableStream,
+        cdpWrite: browser.stdin as NodeJS.WritableStream,
+    };
+}
+
+async function tryWaitForCdpReady(cdp: CdpPipeClient, maxWaitMs: number): Promise<void> {
+    let lastError: unknown = null;
+    const deadline = Date.now() + maxWaitMs;
+    let attempt = 0;
+
+    while (Date.now() < deadline) {
+        attempt += 1;
+        try {
+            await cdp.send("Browser.getVersion", {}, undefined, CDP_STARTUP_PROBE_TIMEOUT_MS);
+            return;
+        } catch (error) {
+            lastError = error;
+            await new Promise((resolve) => setTimeout(resolve, CDP_STARTUP_PROBE_INTERVAL_MS));
+        }
+    }
+
+    const rendered = lastError instanceof Error ? lastError.message : String(lastError);
+    throw new Error(`cdp startup probe failed after ${String(attempt)} attempts over ${String(maxWaitMs)}ms: ${rendered}`);
+}
+
+async function launchBrowserWithCdp(label: string, browserExe: string): Promise<BrowserCdpContext> {
+    const browserArgs = [
+        "--headless=new",
+        "--enable-webgl",
+        "--ignore-gpu-blocklist",
+        "--use-angle=swiftshader",
+        "--use-gl=angle",
+        "--disable-gpu-sandbox",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--remote-debugging-pipe",
+        "about:blank",
+    ];
+
+    const attempts: Array<{ transport: CdpTransportMode; stdio: any[]; startupMaxWaitMs: number }> = [
+        { transport: "fd3-fd4", stdio: ["ignore", "pipe", "pipe", "pipe", "pipe"], startupMaxWaitMs: 30000 },
+        { transport: "stdin-stdout", stdio: ["pipe", "pipe", "pipe"], startupMaxWaitMs: 10000 },
+    ];
+
+    const failures: string[] = [];
+
+    for (const attempt of attempts) {
+        const browser = spawn(browserExe, browserArgs, { stdio: attempt.stdio as any });
+        const browserErrorTail: string[] = [];
+        attachBrowserStderrCapture(browser, browserErrorTail);
+
+        let cdp: CdpPipeClient | null = null;
+        try {
+            const { cdpRead, cdpWrite } = getCdpStreamsForTransport(browser, attempt.transport);
+            cdp = new CdpPipeClient(browser, cdpRead, cdpWrite);
+            await tryWaitForCdpReady(cdp, attempt.startupMaxWaitMs);
+            return {
+                browser,
+                cdp,
+                transport: attempt.transport,
+                browserErrorTail,
+            };
+        } catch (error) {
+            const rendered = error instanceof Error ? error.message : String(error);
+            failures.push(`${attempt.transport}: ${rendered}${formatBrowserStderrTail(browserErrorTail)}`);
+            cdp?.close();
+            browser.kill("SIGTERM");
+        }
+    }
+
+    throw new Error(`${label}: failed to initialize browser debugger pipe:\n${failures.join("\n---\n")}`);
+}
+
 async function runWebProject(label: string, hostV8BinaryPath: string, templatePath: string, runtimeName: string): Promise<void> {
     const exportDir = join(testsBinDir, `${runtimeName}-export`);
 
@@ -600,54 +742,9 @@ async function runWebProject(label: string, hostV8BinaryPath: string, templatePa
         throw new Error(`${label}: no Chrome/Chromium browser found. Set GODOTJS_TEST_BROWSER to an executable path.`);
     }
 
-    const browser = spawn(browserExe, [
-        "--headless=new",
-        "--enable-webgl",
-        "--ignore-gpu-blocklist",
-        "--use-angle=swiftshader",
-        "--use-gl=angle",
-        "--disable-gpu-sandbox",
-        "--no-first-run",
-        "--no-default-browser-check",
-        "--remote-debugging-pipe",
-        "about:blank",
-    ], {
-        stdio: ["ignore", "pipe", "pipe", "pipe", "pipe"],
-    });
-
     const staticServer = await startStaticServer(exportDir);
-    const cdpWrite = browser.stdio[3];
-    const cdpRead = browser.stdio[4];
-
-    if (!cdpWrite || typeof (cdpWrite as { write?: unknown }).write !== "function") {
-        throw new Error(`${label}: browser process missing writable CDP pipe fd 3`);
-    }
-
-    if (!cdpRead || typeof (cdpRead as { on?: unknown }).on !== "function") {
-        throw new Error(`${label}: browser process missing readable CDP pipe fd 4`);
-    }
-
-    const cdp = new CdpPipeClient(
-        browser,
-        cdpRead as NodeJS.ReadableStream,
-        cdpWrite as NodeJS.WritableStream,
-    );
-    const browserErrorTail: string[] = [];
-
-    browser.stderr?.setEncoding("utf-8");
-    browser.stderr?.on("data", (chunk: string | Buffer) => {
-        const text = typeof chunk === "string" ? chunk : chunk.toString("utf-8");
-        for (const line of text.split(/\r?\n/)) {
-            const trimmed = line.trim();
-            if (!trimmed) {
-                continue;
-            }
-            browserErrorTail.push(trimmed);
-            if (browserErrorTail.length > 80) {
-                browserErrorTail.shift();
-            }
-        }
-    });
+    const browserContext = await launchBrowserWithCdp(label, browserExe);
+    const { browser, cdp, browserErrorTail, transport } = browserContext;
 
     try {
         const targetUrl = `http://127.0.0.1:${String(staticServer.port)}/index.html`;
@@ -791,7 +888,6 @@ async function runWebProject(label: string, hostV8BinaryPath: string, templatePa
 
             (async () => {
                 try {
-                    await cdp.send("Browser.getVersion");
                     await cdp.send("Target.setAutoAttach", {
                         autoAttach: true,
                         waitForDebuggerOnStart: false,
@@ -819,7 +915,7 @@ async function runWebProject(label: string, hostV8BinaryPath: string, templatePa
                     await cdp.send("Log.enable", {}, mainSessionId);
                 } catch (error) {
                     const rendered = error instanceof Error ? error.message : String(error);
-                    rejectWithTail(`${label}: failed to initialize browser debugger pipe: ${rendered}`);
+                    rejectWithTail(`${label}: failed to initialize browser debugger pipe (${transport}): ${rendered}`);
                 }
             })();
 
