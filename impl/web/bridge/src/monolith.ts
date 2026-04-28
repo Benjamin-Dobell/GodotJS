@@ -1483,7 +1483,11 @@ class _jsbb_ {
             jsbb_console.error("invalid interop");
         }
         if (typeof this.interop !== "undefined") {
-            jsbb_console.error("Already initialized, do not call it twice");
+            if (ENVIRONMENT_IS_PTHREAD) {
+                this.reset_pthread_runtime_state();
+            } else {
+                jsbb_console.error("Already initialized, do not call it twice");
+            }
         }
         try {
             this.interop = {
@@ -1508,6 +1512,15 @@ class _jsbb_ {
         } catch (err) {
             jsbb_console.error("unexpected error:", err);
         }
+    }
+
+    private static reset_pthread_runtime_state(): void {
+        this.engine?.Release();
+        this.engine = undefined;
+        this.evalResult = undefined;
+        this._i64 = <any>undefined;
+        this._pending_worker_messages = [];
+        this._worker_owner_cache_by_pthread = new Map<number, JSWorkerLike>();
     }
 
     static NewEngine(opaque: Pointer) {
@@ -1874,6 +1887,8 @@ class _jsbb_ {
                     }
 
                     rewritten_set.add(rewritten_value);
+                } else if (rewritten_set !== null) {
+                    rewritten_set.add(original_value);
                 }
 
                 set_entry_index++;

@@ -213,6 +213,19 @@ if (JSWorkerParent) {
 					if (!payload.set.has('alpha')) {
 						fail('set did not contain alpha');
 					}
+					if (!payload.set.has('omega')) {
+						fail('set did not contain omega');
+					}
+					let hasSetVector = false;
+					for (const value of payload.set) {
+						if (value instanceof Vector2 && value.x === 12 && value.y === 34) {
+							hasSetVector = true;
+							break;
+						}
+					}
+					if (!hasSetVector) {
+						fail('set did not contain vector');
+					}
 
 					payload.set.add('workerValue');
 

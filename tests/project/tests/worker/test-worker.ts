@@ -183,6 +183,21 @@ function assertFullPayloadResponse(payload: FullPayload, transferType: TransferT
 		fail('setPayload did not contain alpha');
 	}
 
+	if (!payload.set.has('omega')) {
+		fail('setPayload did not contain omega');
+	}
+
+	let hasSetVector = false;
+	for (const value of payload.set) {
+		if (value instanceof Vector2 && value.x === 12 && value.y === 34) {
+			hasSetVector = true;
+			break;
+		}
+	}
+	if (!hasSetVector) {
+		fail('setPayload did not contain vector');
+	}
+
 	if (!payload.set.has('workerValue')) {
 		fail('setPayload did not contain workerValue');
 	}
@@ -448,7 +463,7 @@ export default class TestWorker extends Node {
 					['number', 7],
 					['vector', new Vector2(1, 2)],
 				]),
-				set: new Set<unknown>(['alpha', 12]),
+				set: new Set<unknown>(['alpha', new Vector2(12, 34), 'omega']),
 				transferBuffer,
 				bigIntValue: BigInt('900719925474099312345'),
 				dateValue: new Date('2020-01-02T03:04:05.678Z'),
