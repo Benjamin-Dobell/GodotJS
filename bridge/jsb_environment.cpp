@@ -1527,7 +1527,7 @@ namespace jsb
 
             do
             {
-                debugger_.update(); // process incoming debugger connections
+                debugger_.update(true); // process incoming debugger connections without forced-service-only restriction
 
                 std::future_status status = debugger_ready_future_.wait_for(debugger_connection_pool_duration);
 

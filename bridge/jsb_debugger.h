@@ -14,7 +14,7 @@ namespace jsb
         ~JavaScriptDebugger();
 
         void init(v8::Isolate* p_isolate, uint16_t p_port);
-        void update();
+        void update(bool p_allow_full_service = false);
         void drop();
 
     protected:

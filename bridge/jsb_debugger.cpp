@@ -16,6 +16,7 @@ namespace jsb
     constexpr int kMaxSendBufSize = 1024 * 1024;
     constexpr int kMaxRecvBufSize = 1024 * 1024;
     constexpr int kMaxProtocolBufSize = 1024 * 1024 * 2;
+    constexpr int kMaxForcedServiceSpinsPerUpdate = 32;
 
     namespace
     {
@@ -269,9 +270,18 @@ namespace jsb
                 context_creation_info.options = LWS_SERVER_OPTION_DISABLE_IPV6;
 
                 inspector_ = v8_inspector::V8Inspector::create(isolate, this);
-                state_ = ECS_READY;
                 wss_ = lws_create_context(&context_creation_info);
-                JSB_DEBUGGER_LOG(Debug, "devtools://devtools/bundled/inspector.html?v8only=true&ws=127.0.0.1:%d/1", port_);
+                if (wss_)
+                {
+                    state_ = ECS_READY;
+                    JSB_DEBUGGER_LOG(Debug, "devtools://devtools/bundled/inspector.html?v8only=true&ws=127.0.0.1:%d/1", port_);
+                }
+                else
+                {
+                    state_ = ECS_NONE;
+                    inspector_.reset();
+                    JSB_DEBUGGER_LOG(Warning, "Failed to bind debugger websocket on port %d; debugger disabled for this runtime", port_);
+                }
             }
             else
             {
@@ -280,11 +290,30 @@ namespace jsb
             }
         }
 
-        void update()
+        void update(bool p_allow_full_service = false)
         {
             if (jsb_unlikely(state_ == ECS_NONE)) return;
 
-            lws_service(wss_, -1);
+            if (p_allow_full_service)
+            {
+                lws_service(wss_, 0);
+            }
+            else
+            {
+                int forced_service_spins = 0;
+
+                while (forced_service_spins < kMaxForcedServiceSpinsPerUpdate)
+                {
+                    if (lws_service_adjust_timeout(wss_, 1, 0) == 0)
+                    {
+                        break;
+                    }
+
+                    // timeout -1: only service forced-service work. Avoids frame-thread blocking wait.
+                    lws_service_tsi(wss_, -1, 0);
+                    ++forced_service_spins;
+                }
+            }
             lws_callback_on_writable_all_protocol(wss_, protocols_);
         }
 
@@ -295,7 +324,7 @@ namespace jsb
                 state_ = ECS_PAUSED;
                 while (state_ == ECS_PAUSED)
                 {
-                    update();
+                    update(true);
                 }
             }
         }
@@ -555,7 +584,7 @@ namespace jsb
         ~JavaScriptDebuggerImpl() = default;
 
         void init() {}
-        void update() {}
+        void update(bool p_allow_full_service = false) {}
 
         void on_context_created(const v8::Local<v8::Context>& p_context) {}
         void on_context_destroyed(const v8::Local<v8::Context>& p_context) {}
@@ -580,9 +609,12 @@ namespace jsb
         impl->init();
     }
 
-    void JavaScriptDebugger::update()
+    void JavaScriptDebugger::update(bool p_allow_full_service)
     {
-        if (impl) impl->update();
+        if (impl)
+        {
+            impl->update(p_allow_full_service);
+        }
     }
 
     void JavaScriptDebugger::drop()
