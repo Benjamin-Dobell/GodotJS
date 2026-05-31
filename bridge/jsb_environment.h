@@ -439,12 +439,17 @@ namespace jsb
 
         jsb_force_inline v8::Local<v8::Symbol> get_symbol(Symbols::Type p_type) const { return symbols_[p_type].Get(isolate_); }
 
-        NativeObjectID bind_godot_object(NativeClassID p_class_id, Object* p_pointer, const v8::Local<v8::Object>& p_object, bool p_js_owned_non_ref = false);
+        NativeObjectID bind_godot_object(
+                NativeClassID p_class_id,
+                Object* p_pointer,
+                const v8::Local<v8::Object>& p_object,
+                bool p_js_owned_non_ref = false,
+                bool p_created_from_js = false);
 
         // [low level binding] bind a C++ `p_pointer` with a JS `p_object`
         // p_type is redundant (could retrieve from class registry with p_class_id), but it's faster to pass it directly
         // p_pointer must be 2-byte aligned (v8 requirement)
-        NativeObjectID bind_pointer(NativeClassID p_class_id, NativeClassType::Type p_type, void* p_pointer, const v8::Local<v8::Object>& p_object, int p_external_rc, bool p_js_owned_non_ref = false);
+        NativeObjectID bind_pointer(NativeClassID p_class_id, NativeClassType::Type p_type, void* p_pointer, const v8::Local<v8::Object>& p_object, int p_external_rc, bool p_js_owned_non_ref = false, bool p_created_from_js = false);
 
         // An optimized binder for Variant. All variant values are not registered in `env`, and completely managed by JS.
         // The real `p_class_id` of `p_pointer` is unnecessary as an input parameter since `Variant` is used as the underlying type for any `TStruct` (primitive type).

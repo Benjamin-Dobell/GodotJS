@@ -349,7 +349,7 @@ namespace jsb
 
                 // IS IT A TRUTH that ref_count==1 after creation_func??
                 jsb_check(!gd_object->is_ref_counted() || !((RefCounted*) gd_object)->is_referenced());
-                environment->bind_godot_object(class_id, gd_object, self, true);
+                environment->bind_godot_object(class_id, gd_object, self, true, true);
                 return;
             }
 

@@ -606,7 +606,7 @@ namespace jsb
         {
         case AsyncCall::TYPE_REF:       reference_object(p_binding, true); break;
         case AsyncCall::TYPE_DEREF:     reference_object(p_binding, false); break;
-        case AsyncCall::TYPE_GC_FREE:   free_object(p_binding, FinalizationType::Default); break;
+        case AsyncCall::TYPE_GC_FREE:   free_object(p_binding, FinalizationType::GarbageCollection); break;
         case AsyncCall::TYPE_TRANSFER_:
             {
                 //TODO need a better way to control lifetime of TransferData?
@@ -809,7 +809,12 @@ namespace jsb
         return EnvironmentStore::get_shared().access();
     }
 
-    NativeObjectID Environment::bind_godot_object(NativeClassID p_class_id, Object* p_pointer, const v8::Local<v8::Object>& p_object, bool p_js_owned_non_ref)
+    NativeObjectID Environment::bind_godot_object(
+            NativeClassID p_class_id,
+            Object* p_pointer,
+            const v8::Local<v8::Object>& p_object,
+            bool p_js_owned_non_ref,
+            bool p_created_from_js)
     {
         // handle the shadow instance created by asynchronous ResourceLoader
         if (ScriptInstance* si = p_pointer->get_script_instance(); si && !si->is_placeholder())
@@ -858,13 +863,20 @@ namespace jsb
             // otherwise, it will be strongly referenced in JS until all external references are released (unreference).
             external_rc = ref_counted->get_reference_count() - 1;
         }
-        const NativeObjectID object_id = bind_pointer(p_class_id, NativeClassType::GodotObject, (void*) p_pointer, p_object, external_rc, p_js_owned_non_ref);
+        const NativeObjectID object_id = bind_pointer(
+                p_class_id,
+                NativeClassType::GodotObject,
+                (void*) p_pointer,
+                p_object,
+                external_rc,
+                p_js_owned_non_ref,
+                p_created_from_js);
 
         p_pointer->get_instance_binding(this, gd_instance_binding_callbacks);
         return object_id;
     }
 
-    NativeObjectID Environment::bind_pointer(NativeClassID p_class_id, NativeClassType::Type p_type, void* p_pointer, const v8::Local<v8::Object>& p_object, int p_external_rc, bool p_js_owned_non_ref)
+    NativeObjectID Environment::bind_pointer(NativeClassID p_class_id, NativeClassType::Type p_type, void* p_pointer, const v8::Local<v8::Object>& p_object, int p_external_rc, bool p_js_owned_non_ref, bool p_created_from_js)
     {
         check_internal_state();
         jsb_checkf(native_classes_.is_valid_index(p_class_id), "bad class_id");
@@ -880,13 +892,29 @@ namespace jsb
 
         handle->class_id = p_class_id;
         handle->js_owned_non_ref_ = p_js_owned_non_ref;
+        handle->ref_count_ = 0;
 #if JSB_DEBUG
         handle->pointer = p_pointer;
 #endif
 
         jsb_v8_check(native_classes_.get_value(p_class_id).type == p_type);
         handle->ref_.Reset(isolate_, p_object);
-        if (p_external_rc == 0)
+        bool ref_counted_godot_object = false;
+        if (p_type == NativeClassType::GodotObject)
+        {
+            const Object* godot_object = static_cast<const Object*>(p_pointer);
+            ref_counted_godot_object = godot_object->is_ref_counted();
+        }
+
+        if (ref_counted_godot_object)
+        {
+            // RefCounted wrappers must start weak. Strong/weak transitions are
+            // driven by live native refcount callbacks in reference_object().
+            // Starting strong from a bind-time snapshot can pin transient
+            // wrappers forever when no further callback transition occurs.
+            handle->ref_.SetWeak(p_pointer, &object_gc_callback, v8::WeakCallbackType::kInternalFields);
+        }
+        else if (p_external_rc == 0)
         {
             handle->ref_.SetWeak(p_pointer, &object_gc_callback, v8::WeakCallbackType::kInternalFields);
         }
@@ -935,6 +963,49 @@ namespace jsb
         // must not be a valuetype object
         // jsb_check(native_classes_.get_value(object_handle->class_id).type != NativeClassType::GodotPrimitive);
 
+        const NativeClassInfo& class_info = native_classes_.get_value(object_handle->class_id);
+        if (class_info.type == NativeClassType::GodotObject)
+        {
+            const Object* godot_object = static_cast<const Object*>(p_pointer);
+            if (godot_object->is_ref_counted())
+            {
+                if (jsb_unlikely(object_handle->ref_.IsEmpty()))
+                {
+                    JSB_LOG(Warning, "UNEXPECTED %s reference on dead value %d",
+                        p_is_inc ? "inc" : "dec", (uintptr_t) p_pointer);
+                    return false;
+                }
+
+                const RefCounted* rc_owner = Object::cast_to<RefCounted>(const_cast<Object*>(godot_object));
+                if (jsb_unlikely(!rc_owner))
+                {
+                    JSB_LOG(Warning, "UNEXPECTED reference callback for non-RefCounted object %d", (uintptr_t) p_pointer);
+                    return false;
+                }
+
+                const int refcount = rc_owner->get_reference_count();
+                if (p_is_inc)
+                {
+                    // C# parity: when unmanaged side references the owner again,
+                    // keep wrapper strongly reachable so script instance stays alive.
+                    if (refcount > 1 && object_handle->ref_.IsWeak())
+                    {
+                        object_handle->ref_.ClearWeak();
+                    }
+                }
+                else
+                {
+                    // C# parity: when managed side is the only remaining owner,
+                    // demote wrapper to weak so it can be reclaimed.
+                    if (refcount == 1 && !object_handle->ref_.IsWeak())
+                    {
+                        object_handle->ref_.SetWeak(p_pointer, &object_gc_callback, v8::WeakCallbackType::kInternalFields);
+                    }
+                }
+                return true;
+            }
+        }
+
         // adding references
         if (p_is_inc)
         {
@@ -960,7 +1031,13 @@ namespace jsb
             return false;
         }
 
-        jsb_check(object_handle->ref_count_ > 0);
+        if (object_handle->ref_count_ == 0)
+        {
+            // RefCounted callbacks are edge notifications around low refcounts,
+            // not a full absolute stream. A deref callback can therefore arrive
+            // while this wrapper is already weak and unpinned.
+            return true;
+        }
 
         --object_handle->ref_count_;
         if (object_handle->ref_count_ == 0)
@@ -993,6 +1070,13 @@ namespace jsb
         // which makes the pointer already erased in `object_gc_callback`
         if (jsb_unlikely(!object_handle))
         {
+            return;
+        }
+
+        if (p_finalize == FinalizationType::GarbageCollection && !object_handle->ref_.IsEmpty())
+        {
+            // Stale GC callback for an older wrapper generation; this native
+            // object has already been rebound to a live JS wrapper.
             return;
         }
 
