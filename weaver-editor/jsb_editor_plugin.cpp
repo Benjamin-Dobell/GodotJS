@@ -842,6 +842,43 @@ void GodotJSEditorPlugin::get_all_scenes(EditorFileSystemDirectory* p_dir, Vecto
     }
 }
 
+static bool _is_safe_for_resource_codegen_mtime_skip(EditorFileSystemDirectory* p_dir, int p_index)
+{
+    const StringName file_type = p_dir->get_file_type(p_index);
+    if (file_type == SNAME("PackedScene") || ClassDB::is_parent_class(file_type, SNAME("Script")))
+    {
+        return false;
+    }
+
+    if (p_dir->get_file_resource_script_class(p_index) != StringName())
+    {
+        return false;
+    }
+
+    return true;
+}
+
+static bool _should_skip_resource_codegen(EditorFileSystemDirectory* p_dir, int p_index)
+{
+    if (!_is_safe_for_resource_codegen_mtime_skip(p_dir, p_index))
+    {
+        return false;
+    }
+
+    const String resource_path = p_dir->get_file_path(p_index);
+    const String output_path = "res://" + jsb::internal::Settings::get_autogen_path().path_join(resource_path.substr(6) + ".gen.ts");
+
+    if (!FileAccess::exists(output_path))
+    {
+        return false;
+    }
+
+    const uint64_t input_mtime = MAX(p_dir->get_file_modified_time(p_index), p_dir->get_file_import_modified_time(p_index));
+    const uint64_t output_mtime = FileAccess::get_modified_time(output_path);
+
+    return output_mtime >= input_mtime;
+}
+
 void GodotJSEditorPlugin::get_all_resources(EditorFileSystemDirectory* p_dir, Vector<String>& r_list)
 {
     for (int i = 0; i < p_dir->get_file_count(); i++)
@@ -854,6 +891,10 @@ void GodotJSEditorPlugin::get_all_resources(EditorFileSystemDirectory* p_dir, Ve
 
         if (!ResourceLoader::get_resource_type(path).is_empty() && !GodotJSExportPlugin::get_ignored_paths().has(path))
         {
+            if (_should_skip_resource_codegen(p_dir, i))
+            {
+                continue;
+            }
             r_list.push_back(p_dir->get_file_path(i));
         }
     }
