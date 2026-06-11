@@ -501,10 +501,10 @@ const TypeMutations: Record<string, TypeMutation> = {
             remove_child: mutate_parameter_type("node", "NodePathMapChild<Map>"),
             validate_property: mutate_parameter_type("property", "GDictionary<PropertyInfo>"),
             rpc: [
-                `${names.get_member("rpc")}<Method extends ${names.get_class("GodotRPCNames")}<this>>(method: Method, ...varargs: ${names.get_class("ResolveGodotRPCParameters")}<this, Method>): Error`,
+                `${names.get_member("rpc")}<Method extends ${names.get_class("GodotRPCNames")}<this>>(method: Method, ...varargs: ${names.get_class("ResolveGodotRPCParameters")}<this, Method>): ${names.get_enum("Error")}`,
             ],
             rpc_id: [
-                `${names.get_member("rpc_id")}<Method extends ${names.get_class("GodotRPCNames")}<this>>(${names.get_parameter("peer_id")}: int64, method: Method, ...varargs: ${names.get_class("ResolveGodotRPCParameters")}<this, Method>): Error`,
+                `${names.get_member("rpc_id")}<Method extends ${names.get_class("GodotRPCNames")}<this>>(${names.get_parameter("peer_id")}: int64, method: Method, ...varargs: ${names.get_class("ResolveGodotRPCParameters")}<this, Method>): ${names.get_enum("Error")}`,
             ],
         },
     },
