@@ -296,26 +296,26 @@ namespace jsb::internal
 			String part = parts[i];
 
 			String part_override = _get_pascal_case_part_override(part, p_input_is_upper);
-			if (!part_override.is_empty())
-			{
-				// Use hardcoded value for part.
-				if (i == 0 || (i == 1 && parts[0].is_empty()))
+				if (!part_override.is_empty())
 				{
-					part_override[i] = _find_lower(part_override[i]);
+					// Use hardcoded value for part.
+					if (i == 0 || (i == 1 && parts[0].is_empty()))
+					{
+						part_override[0] = _find_lower(part_override[0]);
+					}
+					ret += part_override;
+					continue;
 				}
-				ret += part_override;
-				continue;
-			}
 
-			if (!part.is_empty())
-			{
-				if (i == 0 || (i == 1 && parts[0].is_empty()))
+				if (!part.is_empty())
 				{
-					part[i] = _find_lower(part[i]);
-				}
-				else
-				{
-					part[0] = _find_upper(part[0]);
+					if (i == 0 || (i == 1 && parts[0].is_empty()))
+					{
+						part[0] = _find_lower(part[0]);
+					}
+					else
+					{
+						part[0] = _find_upper(part[0]);
 				}
 				for (int j = 1; j < part.length(); j++)
 				{

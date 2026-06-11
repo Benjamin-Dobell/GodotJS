@@ -279,7 +279,14 @@ namespace jsb::internal
     bool Settings::get_camel_case_bindings_enabled()
     {
         init_settings();
-        return GLOBAL_GET(kRtCamelCaseBindingsEnabled);
+        static bool initialized = false;
+        static bool cached_enabled = false;
+        if (!initialized)
+        {
+            cached_enabled = GLOBAL_GET(kRtCamelCaseBindingsEnabled);
+            initialized = true;
+        }
+        return cached_enabled;
     }
 
     String Settings::get_indentation()

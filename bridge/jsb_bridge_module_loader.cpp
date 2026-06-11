@@ -172,10 +172,17 @@ namespace jsb
 
         void _get_member_name(const v8::FunctionCallbackInfo<v8::Value>& info)
         {
-            Variant identifier;
-            _return_result(info, Variant::STRING, identifier, [](const Variant &identifier) {
-                return internal::NamingUtil::get_member_name(identifier);
-            });
+            v8::Isolate* isolate = info.GetIsolate();
+            v8::HandleScope handle_scope(isolate);
+            if (info.Length() != 1 || !info[0]->IsString())
+            {
+                jsb_throw(isolate, "bad param");
+                return;
+            }
+
+            const String identifier = impl::Helper::to_string(isolate, info[0]);
+            const String member_name = internal::NamingUtil::get_member_name(identifier);
+            info.GetReturnValue().Set(impl::Helper::new_string(isolate, member_name));
         }
 
         void _get_parameter_name(const v8::FunctionCallbackInfo<v8::Value>& info)

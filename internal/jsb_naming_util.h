@@ -2,6 +2,7 @@
 #define GODOTJS_NAMING_UTIL_H
 
 #include "core/string/ustring.h"
+#include "core/templates/hash_map.h"
 #include "jsb_settings.h"
 
 namespace jsb::internal
@@ -68,7 +69,22 @@ namespace jsb::internal
 		{
 			if (Settings::get_camel_case_bindings_enabled())
 			{
-				return snake_to_camel_case(p_original_name);
+				constexpr int max_cache_entries = 4096;
+				thread_local HashMap<String, String> member_name_cache;
+				if (const String *cached = member_name_cache.getptr(p_original_name))
+				{
+					return *cached;
+				}
+
+				const String converted = p_original_name.find_char('_') < 0
+					? p_original_name
+					: snake_to_camel_case(p_original_name);
+				if (member_name_cache.size() >= max_cache_entries)
+				{
+					member_name_cache.clear();
+				}
+				member_name_cache.insert(p_original_name, converted);
+				return converted;
 			}
 
 			return p_original_name;
@@ -78,7 +94,7 @@ namespace jsb::internal
 		{
 			if (Settings::get_camel_case_bindings_enabled())
 			{
-				return snake_to_camel_case(p_original_name);
+				return get_member_name(p_original_name);
 			}
 
 			return p_original_name;
