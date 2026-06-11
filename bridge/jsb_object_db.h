@@ -165,6 +165,17 @@ namespace jsb
 
         jsb_force_inline int size() const { return objects_.size(); }
 
+        void copy_entries(Vector<Pair<void*, NativeObjectID>>& r_entries) const
+        {
+            JSB_OBJECT_DB_STATEMENT(RWLockRead lock(lock_));
+            r_entries.clear();
+            r_entries.reserve(objects_index_.size());
+            for (const KeyValue<void*, NativeObjectID>& it : objects_index_)
+            {
+                r_entries.push_back({ it.key, it.value });
+            }
+        }
+
         jsb_force_inline bool has_object(void* p_pointer) const
         {
             JSB_OBJECT_DB_STATEMENT(RWLockRead lock(lock_));
@@ -235,19 +246,10 @@ namespace jsb
             if (const NativeObjectID* existing_object_id_ptr = objects_index_.getptr(p_pointer))
             {
                 const NativeObjectID existing_object_id = *existing_object_id_ptr;
-                ObjectHandle& existing_handle = objects_.get_value(existing_object_id);
-
-                if (existing_handle.ref_.IsEmpty())
-                {
-                    objects_.remove_at_checked(existing_object_id);
-                    objects_index_.erase(p_pointer);
-                }
-                else
-                {
-                    if (o_handle) *o_handle = JSB_OBJECT_DB_HANDLE(ObjectHandlePtr, objects_.get_value_scoped(existing_object_id));
-                    else JSB_OBJECT_DB_STATEMENT(lock_.write_unlock());
-                    return existing_object_id;
-                }
+                ObjectHandlePtr existing_handle = JSB_OBJECT_DB_HANDLE(ObjectHandlePtr, objects_.get_value_scoped(existing_object_id));
+                if (o_handle) *o_handle = std::move(existing_handle);
+                else existing_handle = nullptr;
+                return existing_object_id;
             }
 
             const NativeObjectID object_id = objects_.add({});

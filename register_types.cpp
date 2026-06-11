@@ -14,6 +14,7 @@ void jsb_initialize_module(ModuleInitializationLevel p_level)
     if (p_level == MODULE_INITIALIZATION_LEVEL_SERVERS)
     {
         GDREGISTER_CLASS(GodotJSScript);
+        GDREGISTER_CLASS(GodotJSObjectDBSnapshot);
 #ifdef TOOLS_ENABLED
         GDREGISTER_CLASS(GodotJSEditorHelper);
         GDREGISTER_CLASS(GodotJSEditorProgress);

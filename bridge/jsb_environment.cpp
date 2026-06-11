@@ -198,7 +198,14 @@ namespace jsb
         {
             if (const std::shared_ptr<Environment> env = EnvironmentStore::get_shared().access(p_token))
             {
-                if (env->verify_object(p_binding) && env->add_async_call(
+                // If there is no live JS wrapper handle for this binding, do not
+                // intercept native ref/unref decisions.
+                if (!env->has_live_object_binding(p_binding))
+                {
+                    return true;
+                }
+
+                if (env->add_async_call(
                     p_reference ? Environment::AsyncCall::TYPE_REF : Environment::AsyncCall::TYPE_DEREF,
                     p_binding))
                 {
@@ -439,6 +446,9 @@ namespace jsb
         // cleanup all class templates (must do after objects cleaned up)
         native_classes_.clear();
 
+#if JSB_WITH_V8
+        release_valuetype_finalizers();
+#endif
         isolate_->Dispose();
         isolate_ = nullptr;
 
@@ -518,6 +528,9 @@ namespace jsb
             free_object(pointer, FinalizationType::Default /* Force? */);
         }
 
+#if JSB_WITH_V8
+        release_valuetype_finalizers();
+#endif
         variant_allocator_.drain();
         flags_ |= EF_PostDispose;
         EnvironmentStore::get_shared().remove(this);
@@ -581,6 +594,9 @@ namespace jsb
 #if JSB_WITH_DEBUGGER
         debugger_.update();
 #endif
+#if JSB_WITH_V8
+        drain_valuetype_finalizers();
+#endif
         variant_allocator_.drain();
     }
 
@@ -638,6 +654,121 @@ namespace jsb
         exec_async_call(p_type, p_binding);
         return true;
     }
+
+#if JSB_WITH_V8
+    void Environment::bind_valuetype_deleter(Variant* p_pointer, const v8::Local<v8::Object>& p_object)
+    {
+        ValuetypeWeakFinalizerToken* token = memnew(ValuetypeWeakFinalizerToken(isolate_, this, p_pointer, p_object));
+        valuetype_finalizer_lock_.lock();
+        token->active_index = active_valuetype_finalizers_.size();
+        active_valuetype_finalizers_.push_back(token);
+        valuetype_finalizer_lock_.unlock();
+        token->wrapper.SetWeak(token, &valuetype_gc_callback, v8::WeakCallbackType::kParameter);
+    }
+
+    bool Environment::enqueue_valuetype_finalizer(ValuetypeWeakFinalizerToken* p_token)
+    {
+        valuetype_finalizer_lock_.lock();
+        if (p_token->queued_for_finalization)
+        {
+            valuetype_finalizer_lock_.unlock();
+            return false;
+        }
+
+        p_token->queued_for_finalization = true;
+        const int active_index = p_token->active_index;
+        if (active_index >= 0)
+        {
+            const int last_index = active_valuetype_finalizers_.size() - 1;
+            jsb_check(active_index <= last_index);
+
+            if (active_index != last_index)
+            {
+                ValuetypeWeakFinalizerToken* moved_token = active_valuetype_finalizers_[last_index];
+                active_valuetype_finalizers_[active_index] = moved_token;
+                moved_token->active_index = active_index;
+            }
+
+            active_valuetype_finalizers_.remove_at_unordered(active_index);
+            p_token->active_index = -1;
+        }
+        pending_valuetype_finalizers_.push_back(p_token);
+        valuetype_finalizer_lock_.unlock();
+        return true;
+    }
+
+    void Environment::drain_valuetype_finalizers()
+    {
+        LocalVector<ValuetypeWeakFinalizerToken*> finalize_batch;
+
+        valuetype_finalizer_lock_.lock();
+        const int pending_count = pending_valuetype_finalizers_.size();
+        finalize_batch.reserve(pending_count);
+        for (int index = 0; index < pending_count; ++index)
+        {
+            finalize_batch.push_back(pending_valuetype_finalizers_[index]);
+        }
+        pending_valuetype_finalizers_.clear();
+        valuetype_finalizer_lock_.unlock();
+
+        const int finalize_count = finalize_batch.size();
+        for (int index = 0; index < finalize_count; ++index)
+        {
+            ValuetypeWeakFinalizerToken* token = finalize_batch[index];
+            if (!token)
+            {
+                continue;
+            }
+
+            _valuetype_deleter(token->variant, sizeof(Variant), this);
+            memdelete(token);
+        }
+    }
+
+    void Environment::release_valuetype_finalizers()
+    {
+        LocalVector<ValuetypeWeakFinalizerToken*> finalize_batch;
+
+        valuetype_finalizer_lock_.lock();
+        const int pending_count = pending_valuetype_finalizers_.size();
+        const int active_count = active_valuetype_finalizers_.size();
+        finalize_batch.reserve(pending_count + active_count);
+        for (int index = 0; index < pending_count; ++index)
+        {
+            finalize_batch.push_back(pending_valuetype_finalizers_[index]);
+        }
+        for (int index = 0; index < active_count; ++index)
+        {
+            finalize_batch.push_back(active_valuetype_finalizers_[index]);
+        }
+        active_valuetype_finalizers_.clear();
+        pending_valuetype_finalizers_.clear();
+        valuetype_finalizer_lock_.unlock();
+
+        const int finalize_count = finalize_batch.size();
+        for (int index = 0; index < finalize_count; ++index)
+        {
+            ValuetypeWeakFinalizerToken* token = finalize_batch[index];
+            if (!token)
+            {
+                continue;
+            }
+
+            token->wrapper.Reset();
+            if (token->variant)
+            {
+                _valuetype_deleter(token->variant, sizeof(Variant), this);
+                token->variant = nullptr;
+            }
+            token->env = nullptr;
+
+            if (!token->awaiting_second_pass.load())
+            {
+                memdelete(token);
+            }
+        }
+    }
+#endif
 
     void Environment::_on_worker_transfer(const v8::Local<v8::Context>& p_context, const TransferData* p_data)
     {
@@ -847,8 +978,7 @@ namespace jsb
             }
         }
 
-        // We need to increase the refcount because Godot Objects are bound as external pointer with a strong JS reference,
-        // and unreference() will always be called on gc callbacks.
+        // We need to increase the refcount because finalization always calls `unreference()` for RefCounted objects.
         int external_rc = 1;
         if (p_pointer->is_ref_counted())
         {
@@ -858,9 +988,9 @@ namespace jsb
                 JSB_LOG(Error, "can not bind a dead object %d", (uintptr_t) p_pointer);
                 return {};
             }
-            // for a ref-counted object which instantiated by GodotJS, the external_rc will be 0.
-            // then, the object will behave like a managed JS object.
-            // otherwise, it will be strongly referenced in JS until all external references are released (unreference).
+            // Use Godot's current external refcount snapshot as a binding hint.
+            // The binding-layer counter is intentionally normalized in bind_pointer()
+            // to avoid sticky absolute-count semantics.
             external_rc = ref_counted->get_reference_count() - 1;
         }
         const NativeObjectID object_id = bind_pointer(
@@ -926,6 +1056,10 @@ namespace jsb
         JSB_LOG(VeryVerbose, "bind object class:%s(%d) addr:%d id:%d",
             (String) native_classes_.get_value(p_class_id).name, p_class_id,
             (uintptr_t) p_pointer, object_id);
+
+#ifdef DEBUG_ENABLED
+        _record_object_origin(object_id, p_class_id, p_created_from_js, p_js_owned_non_ref);
+#endif
         return object_id;
     }
 
@@ -1064,6 +1198,9 @@ namespace jsb
         {
             check_internal_state();
         }
+#ifdef DEBUG_ENABLED
+        const NativeObjectID object_id = object_db_.try_get_object_id(p_pointer);
+#endif
         ObjectHandlePtr object_handle = object_db_.try_get_object(p_pointer);
 
         // avoid crash in the situation that `InstanceBindingCallbacks::free_callback` is called before JS object gc callback is called,
@@ -1091,6 +1228,9 @@ namespace jsb
         // erase from ObjectDB before clearing the ref to avoid exposing a transient state
         // with an empty `ref_` in the ObjectDB, which can race with reference callbacks.
         object_db_.remove_object(object_handle, p_pointer);
+#ifdef DEBUG_ENABLED
+        _forget_object_origin(object_id, p_finalize);
+#endif
 
         // TODO: Look into if we ought to be calling obj->free_instance_binding(this)
 
@@ -1155,6 +1295,227 @@ namespace jsb
         r_stats.cached_string_names = string_name_cache_.size();
         r_stats.persistent_objects = persistent_objects_.size();
         r_stats.allocated_variants = variant_allocator_.get_allocated_num();
+    }
+
+    void Environment::_record_object_origin(const NativeObjectID& p_object_id, NativeClassID p_class_id, bool p_created_from_js, bool p_js_owned_non_ref)
+    {
+#ifndef DEBUG_ENABLED
+        jsb_unused(p_object_id);
+        jsb_unused(p_class_id);
+        jsb_unused(p_created_from_js);
+        jsb_unused(p_js_owned_non_ref);
+        return;
+#else
+        auto capture_top_stack_frame = [this]() -> String
+        {
+            if (!isolate_)
+            {
+                return "";
+            }
+            v8::HandleScope handle_scope(isolate_);
+            v8::Local<v8::StackTrace> stack = v8::StackTrace::CurrentStackTrace(isolate_, 6, v8::StackTrace::kDetailed);
+            const int frame_count = stack->GetFrameCount();
+            for (int i = 0; i < frame_count; i++)
+            {
+                v8::Local<v8::StackFrame> frame = stack->GetFrame(isolate_, i);
+                v8::Local<v8::String> script_name_value = frame->GetScriptName();
+                if (script_name_value.IsEmpty())
+                {
+                    continue;
+                }
+
+                v8::String::Utf8Value script_name_utf8(isolate_, script_name_value);
+                if (script_name_utf8.length() <= 0)
+                {
+                    continue;
+                }
+                const String script_name = String(*script_name_utf8);
+                if (script_name.find("jsb_") != -1 || script_name.find("modules/GodotJS/") != -1)
+                {
+                    continue;
+                }
+
+                v8::Local<v8::String> function_name_value = frame->GetFunctionName();
+                v8::String::Utf8Value function_name_utf8(isolate_, function_name_value);
+                const String function_name = function_name_utf8.length() > 0 ? String(*function_name_utf8) : String("<anonymous>");
+                const int line = frame->GetLineNumber();
+                const int column = frame->GetColumn();
+                return vformat("%s:%d:%d (%s)", script_name, line, column, function_name);
+            }
+            return "";
+        };
+
+        static int s_capture_origin_stack_enabled = -1;
+        if (s_capture_origin_stack_enabled == -1)
+        {
+            bool enabled = false;
+            if (const OS* os = OS::get_singleton())
+            {
+                if (os->has_environment("JSB_CAPTURE_OBJECT_ORIGIN_STACK"))
+                {
+                    const String raw_value = os->get_environment("JSB_CAPTURE_OBJECT_ORIGIN_STACK").strip_edges().to_lower();
+                    enabled = raw_value == "1" || raw_value == "true" || raw_value == "yes" || raw_value == "on";
+                }
+            }
+            s_capture_origin_stack_enabled = enabled ? 1 : 0;
+        }
+
+        if (!p_object_id)
+        {
+            return;
+        }
+
+        const uint64_t object_key = *p_object_id;
+        ObjectOriginInfo info;
+        info.object_id = p_object_id;
+        info.class_id = p_class_id;
+        info.created_tick_msec = OS::get_singleton() ? OS::get_singleton()->get_ticks_msec() : 0;
+        info.created_sequence = ++object_origin_sequence_;
+        info.created_from_js = p_created_from_js;
+        info.js_owned_non_ref = p_js_owned_non_ref;
+        if (p_created_from_js && s_capture_origin_stack_enabled == 1)
+        {
+            info.created_stack_top = capture_top_stack_frame();
+        }
+
+        ObjectOriginInfo* existing = object_origin_info_.getptr(object_key);
+        if (existing != nullptr)
+        {
+            *existing = info;
+        }
+        else
+        {
+            object_origin_info_.insert(object_key, info);
+        }
+
+        if (p_created_from_js)
+        {
+            js_created_total_++;
+        }
+#endif
+    }
+
+    void Environment::_forget_object_origin(const NativeObjectID& p_object_id, FinalizationType p_finalize)
+    {
+#ifndef DEBUG_ENABLED
+        jsb_unused(p_object_id);
+        jsb_unused(p_finalize);
+        return;
+#else
+        if (!p_object_id)
+        {
+            return;
+        }
+
+        const uint64_t object_key = *p_object_id;
+        const HashMap<uint64_t, ObjectOriginInfo>::Iterator it = object_origin_info_.find(object_key);
+        if (it == object_origin_info_.end())
+        {
+            return;
+        }
+
+        if (it->value.created_from_js)
+        {
+            js_created_freed_++;
+            if (p_finalize == FinalizationType::GarbageCollection)
+            {
+                js_created_freed_gc_++;
+            }
+            else
+            {
+                js_created_freed_explicit_++;
+            }
+        }
+        object_origin_info_.erase(object_key);
+#endif
+    }
+
+    Dictionary Environment::get_object_origin_snapshot(bool p_include_live_entries, int p_max_entries) const
+    {
+        Dictionary snapshot;
+        snapshot["environment_id"] = (uint64_t)(uintptr_t) id();
+        snapshot["thread_id"] = (uint64_t) thread_id_;
+        snapshot["is_worker"] = (flags_ & EF_Worker) != 0;
+        snapshot["is_shadow"] = (flags_ & EF_Shadow) != 0;
+#ifdef DEBUG_ENABLED
+        snapshot["debug_enabled"] = true;
+        snapshot["live_objects"] = object_db_.size();
+        snapshot["origin_entries"] = object_origin_info_.size();
+        snapshot["js_created_total"] = js_created_total_;
+        snapshot["js_created_freed"] = js_created_freed_;
+        snapshot["js_created_freed_gc"] = js_created_freed_gc_;
+        snapshot["js_created_freed_explicit"] = js_created_freed_explicit_;
+#else
+        snapshot["live_objects"] = 0;
+        snapshot["origin_entries"] = 0;
+        snapshot["js_created_total"] = 0;
+        snapshot["js_created_freed"] = 0;
+        snapshot["js_created_freed_gc"] = 0;
+        snapshot["js_created_freed_explicit"] = 0;
+        snapshot["debug_enabled"] = false;
+        snapshot["error"] = "Bridge provenance snapshot is available only in DEBUG_ENABLED builds.";
+#endif
+
+        if (!p_include_live_entries)
+        {
+            return snapshot;
+        }
+#ifndef DEBUG_ENABLED
+        snapshot["live_entries"] = Array();
+        jsb_unused(p_max_entries);
+        return snapshot;
+#else
+
+        Vector<Pair<void*, NativeObjectID>> entries;
+        object_db_.copy_entries(entries);
+
+        Array live_entries;
+        int appended = 0;
+        for (const Pair<void*, NativeObjectID>& pair : entries)
+        {
+            if (p_max_entries > 0 && appended >= p_max_entries)
+            {
+                break;
+            }
+
+            const ObjectHandleConstPtr handle = object_db_.try_get_object(pair.second);
+            if (!handle)
+            {
+                continue;
+            }
+
+            Dictionary item;
+            item["object_id"] = (uint64_t) *pair.second;
+            item["pointer"] = (uint64_t) (uintptr_t) pair.first;
+            item["ref_count"] = handle->ref_count_;
+            item["js_owned_non_ref"] = handle->js_owned_non_ref_;
+            item["has_js_ref"] = !handle->ref_.IsEmpty();
+
+            const NativeClassInfo& class_info = native_classes_.get_value(handle->class_id);
+            item["native_class_name"] = String(class_info.name);
+            item["native_class_type"] = (int) class_info.type;
+
+            const ObjectOriginInfo* origin = object_origin_info_.getptr((uint64_t)*pair.second);
+            if (origin)
+            {
+                item["created_from_js"] = origin->created_from_js;
+                item["origin_created_tick_msec"] = origin->created_tick_msec;
+                item["origin_sequence"] = origin->created_sequence;
+                item["origin_stack_top"] = origin->created_stack_top;
+            }
+            else
+            {
+                item["created_from_js"] = false;
+                item["origin_stack_top"] = "";
+            }
+
+            live_entries.push_back(item);
+            appended++;
+        }
+
+        snapshot["live_entries"] = live_entries;
+        return snapshot;
+#endif
     }
 
     ObjectCacheID Environment::get_cached_function(const v8::Local<v8::Function>& p_func)

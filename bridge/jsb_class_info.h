@@ -11,8 +11,11 @@ namespace jsb
         // break the binding, no delete
         None,
 
-        //
+        // default finalization path used by explicit runtime cleanup
         Default,
+
+        // JS GC second-pass finalization callback
+        GarbageCollection,
     };
 
     typedef void (*ConstructorFunc)(const v8::FunctionCallbackInfo<v8::Value>&);

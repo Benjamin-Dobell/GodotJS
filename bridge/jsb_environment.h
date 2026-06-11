@@ -116,6 +116,26 @@ namespace jsb
         // symbol for class_id on FunctionTemplate of native class
         v8::Global<v8::Symbol> symbols_[Symbols::kNum];
 
+#if JSB_WITH_V8
+        struct ValuetypeWeakFinalizerToken
+        {
+            Environment* env;
+            Variant* variant;
+            v8::Global<v8::Object> wrapper;
+            std::atomic<bool> awaiting_second_pass = false;
+            int active_index = -1;
+            bool queued_for_finalization = false;
+
+            ValuetypeWeakFinalizerToken(v8::Isolate* p_isolate, Environment* p_env, Variant* p_variant, const v8::Local<v8::Object>& p_wrapper)
+                : env(p_env), variant(p_variant), wrapper(p_isolate, p_wrapper)
+            {}
+        };
+
+        SpinLock valuetype_finalizer_lock_;
+        LocalVector<ValuetypeWeakFinalizerToken*> active_valuetype_finalizers_;
+        LocalVector<ValuetypeWeakFinalizerToken*> pending_valuetype_finalizers_;
+#endif
+
         /*volatile*/
         Thread::ID thread_id_;
 
@@ -158,6 +178,25 @@ namespace jsb
 
         ObjectDB object_db_;
         HashSet<void*> persistent_objects_;
+
+#ifdef DEBUG_ENABLED
+        struct ObjectOriginInfo
+        {
+            NativeObjectID object_id;
+            NativeClassID class_id = {};
+            uint64_t created_tick_msec = 0;
+            uint64_t created_sequence = 0;
+            bool created_from_js = false;
+            bool js_owned_non_ref = false;
+            String created_stack_top;
+        };
+        HashMap<uint64_t, ObjectOriginInfo> object_origin_info_;
+        uint64_t object_origin_sequence_ = 0;
+        uint64_t js_created_total_ = 0;
+        uint64_t js_created_freed_ = 0;
+        uint64_t js_created_freed_gc_ = 0;
+        uint64_t js_created_freed_explicit_ = 0;
+#endif
 
         internal::VariantAllocator variant_allocator_;
 
@@ -457,7 +496,11 @@ namespace jsb
         jsb_force_inline void bind_valuetype(Variant* p_pointer, const v8::Local<v8::Object>& p_object)
         {
             p_object->SetAlignedPointerInInternalField(IF_Pointer, p_pointer);
+#if JSB_WITH_V8
+            bind_valuetype_deleter(p_pointer, p_object);
+#else
             impl::Helper::SetDeleter(p_pointer, p_object, _valuetype_deleter, this);
+#endif
         }
 
         jsb_force_inline NativeObjectID try_get_object_id(void* p_pointer) const { return object_db_.try_get_object_id(p_pointer); }
@@ -500,6 +543,20 @@ namespace jsb
         jsb_force_inline bool verify_object(void* p_pointer) const
         {
             return jsb_likely(p_pointer) && object_db_.has_object(p_pointer);
+        }
+
+        // whether the pointer is registered and still has a live JS wrapper handle
+        jsb_force_inline bool has_live_object_binding(void* p_pointer) const
+        {
+            if (jsb_unlikely(!p_pointer))
+            {
+                return false;
+            }
+            if (const ObjectHandleConstPtr ptr = object_db_.try_get_object(p_pointer))
+            {
+                return !ptr->ref_.IsEmpty();
+            }
+            return false;
         }
 
         void* get_verified_object(const v8::Local<v8::Object>& p_obj, NativeClassType::Type p_type) const;
@@ -610,6 +667,7 @@ namespace jsb
         jsb_force_inline const ScriptClassInfoArray& get_script_classes() { return script_classes_; }
 
         void get_statistics(Statistics& r_stats) const;
+        Dictionary get_object_origin_snapshot(bool p_include_live_entries = true, int p_max_entries = 0) const;
 
 #if JSB_WITH_DEBUGGER
 
@@ -634,6 +692,9 @@ namespace jsb
         static std::shared_ptr<Environment> _access();
 
     private:
+        void _record_object_origin(const NativeObjectID& p_object_id, NativeClassID p_class_id, bool p_created_from_js, bool p_js_owned_non_ref);
+        void _forget_object_origin(const NativeObjectID& p_object_id, FinalizationType p_finalize);
+
         void exec_async_calls();
         void exec_async_call(AsyncCall::Type p_type, void* p_binding);
 
@@ -643,6 +704,13 @@ namespace jsb
          * @note execution order is not guaranteed
          */
         bool add_async_call(AsyncCall::Type p_type, void* p_binding);
+
+#if JSB_WITH_V8
+        void bind_valuetype_deleter(Variant* p_pointer, const v8::Local<v8::Object>& p_object);
+        bool enqueue_valuetype_finalizer(ValuetypeWeakFinalizerToken* p_token);
+        void drain_valuetype_finalizers();
+        void release_valuetype_finalizers();
+#endif
 
         void _on_worker_transfer(const v8::Local<v8::Context>& p_context, const struct TransferData* p_data);
 #if !JSB_WITH_WEB
@@ -673,6 +741,11 @@ namespace jsb
                 {
                     object_handle->ref_.Reset();
                 }
+                else
+                {
+                    // Pointer already detached from the binding table.
+                    return;
+                }
 
                 if (!env->is_disposing())
                 {
@@ -695,9 +768,57 @@ namespace jsb
                     return;
                 }
 
+                if (ObjectHandlePtr object_handle = env->object_db_.try_get_object(info.GetParameter()))
+                {
+                    if (!object_handle->ref_.IsEmpty())
+                    {
+                        // Wrapper has already been rebound/live again; ignore this stale GC callback.
+                        return;
+                    }
+                }
+                else
+                {
+                    return;
+                }
+
                 env->add_async_call(AsyncCall::TYPE_GC_FREE, info.GetParameter());
             }
         }
+
+#if JSB_WITH_V8
+        jsb_force_inline static void valuetype_gc_callback(const v8::WeakCallbackInfo<ValuetypeWeakFinalizerToken>& info)
+        {
+            ValuetypeWeakFinalizerToken* token = info.GetParameter();
+            jsb_check(token);
+            token->wrapper.Reset();
+            token->awaiting_second_pass.store(true);
+
+            if (Environment* env = token->env; env && !env->is_disposing())
+            {
+                info.SetSecondPassCallback(&valuetype_gc_callback_second_pass);
+            }
+            else
+            {
+                token->awaiting_second_pass.store(false);
+            }
+        }
+
+        static void valuetype_gc_callback_second_pass(const v8::WeakCallbackInfo<ValuetypeWeakFinalizerToken>& info)
+        {
+            ValuetypeWeakFinalizerToken* token = info.GetParameter();
+            jsb_check(token);
+            token->awaiting_second_pass.store(false);
+
+            if (Environment* env = token->env)
+            {
+                env->enqueue_valuetype_finalizer(token);
+            }
+            else
+            {
+                memdelete(token);
+            }
+        }
+#endif
 
         // a forward method for non-v8 implementations
         static void _valuetype_deleter(const v8::WeakCallbackInfo<void>& info)
