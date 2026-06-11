@@ -311,6 +311,7 @@ void GodotJSEditorHelper::_bind_methods()
 {
     ClassDB::bind_static_method(jsb_typename(GodotJSEditorHelper), D_METHOD("show_toast", "text", "severity"), &GodotJSEditorHelper::show_toast);
     ClassDB::bind_static_method(jsb_typename(GodotJSEditorHelper), D_METHOD("is_file_content_equal", "path", "content"), &GodotJSEditorHelper::is_file_content_equal);
+    ClassDB::bind_static_method(jsb_typename(GodotJSEditorHelper), D_METHOD("get_resource_codegen_info", "resource_path"), &GodotJSEditorHelper::get_resource_codegen_info);
     ClassDB::bind_static_method(jsb_typename(GodotJSEditorHelper), D_METHOD("get_resource_type_descriptor", "resource_path"), &GodotJSEditorHelper::get_resource_type_descriptor);
     ClassDB::bind_static_method(jsb_typename(GodotJSEditorHelper), D_METHOD("get_scene_nodes", "scene_path"), &GodotJSEditorHelper::get_scene_nodes);
 }
@@ -336,6 +337,18 @@ bool GodotJSEditorHelper::is_file_content_equal(const String& p_path, const Stri
 
 Dictionary GodotJSEditorHelper::get_resource_type_descriptor(const String& p_path)
 {
+    Dictionary codegen_info = get_resource_codegen_info(p_path);
+    Variant descriptor = codegen_info.get("descriptor", Dictionary());
+    if (descriptor.get_type() == Variant::DICTIONARY)
+    {
+        return descriptor;
+    }
+    return Dictionary();
+}
+
+Dictionary GodotJSEditorHelper::get_resource_codegen_info(const String& p_path)
+{
+    Dictionary codegen_info;
     Dictionary descriptor;
     Error err;
     Ref<Resource> resource = ResourceLoader::load(p_path, "", ResourceFormatLoader::CACHE_MODE_REUSE, &err);
@@ -343,7 +356,7 @@ Dictionary GodotJSEditorHelper::get_resource_type_descriptor(const String& p_pat
     if (resource.is_null())
     {
         _log_load_error(p_path, "Resource", err);
-        return descriptor;
+        return codegen_info;
     }
 
     PackedScene* scene = Object::cast_to<PackedScene>(resource.ptr());
@@ -354,7 +367,7 @@ Dictionary GodotJSEditorHelper::get_resource_type_descriptor(const String& p_pat
         if (!instantiated_scene)
         {
             JSB_LOG(Error, "Error instantiating scene from %s", p_path);
-            return descriptor;
+            return codegen_info;
         }
 
         jsb::JSEnvironment env(instantiated_scene->get_scene_file_path(), true);
@@ -366,13 +379,49 @@ Dictionary GodotJSEditorHelper::get_resource_type_descriptor(const String& p_pat
         descriptor[jsb_string_name(name)] = "PackedScene";
         descriptor[jsb_string_name(arguments)] = generic_arguments;
 
-        return descriptor;
+        codegen_info["descriptor"] = descriptor;
+        return codegen_info;
     }
 
+    GodotJSScript* script_resource = Object::cast_to<GodotJSScript>(resource.ptr());
     ScriptInstance* script_instance = resource->get_script_instance();
-    GodotJSScript* script = script_instance != nullptr ? Object::cast_to<GodotJSScript>(*script_instance->get_script()) : nullptr;
+    GodotJSScript* resource_script = script_instance != nullptr ? Object::cast_to<GodotJSScript>(*script_instance->get_script()) : nullptr;
+    GodotJSScript* descriptor_script = resource_script != nullptr ? resource_script : script_resource;
+    GodotJSScript* rpc_script = script_resource != nullptr ? script_resource : descriptor_script;
+    Dictionary script_rpc_info;
 
-    if (script != nullptr)
+    if (rpc_script != nullptr)
+    {
+        const String rpc_class_name = rpc_script->get_global_name();
+        if (!rpc_class_name.is_empty())
+        {
+            const Variant rpc_config_var = rpc_script->get_rpc_config();
+            if (rpc_config_var.get_type() == Variant::DICTIONARY)
+            {
+                const Dictionary rpc_config = rpc_config_var;
+                Array method_names = rpc_config.keys();
+                method_names.sort();
+
+                Array methods;
+                for (int i = 0; i < method_names.size(); i++)
+                {
+                    const String method_name = method_names[i];
+                    if (!method_name.is_empty())
+                    {
+                        methods.push_back(method_name);
+                    }
+                }
+
+                if (!methods.is_empty())
+                {
+                    script_rpc_info["class_name"] = rpc_class_name;
+                    script_rpc_info["methods"] = methods;
+                }
+            }
+        }
+    }
+
+    if (descriptor_script != nullptr)
     {
         jsb::JSEnvironment env(resource->get_path(), true);
 
@@ -380,21 +429,26 @@ Dictionary GodotJSEditorHelper::get_resource_type_descriptor(const String& p_pat
         codegen_request[jsb_string_name(type)] = (int32_t) CodeGenType::ScriptResourceTypeDescriptor;
         codegen_request[jsb_string_name(resource)] = resource;
 
-        if (_request_codegen(env, script, codegen_request, descriptor))
+        if (_request_codegen(env, descriptor_script, codegen_request, descriptor))
         {
-            return descriptor;
+            codegen_info["descriptor"] = descriptor;
+            if (!script_rpc_info.is_empty())
+            {
+                codegen_info["rpc"] = script_rpc_info;
+            }
+            return codegen_info;
         }
     }
 
-    if (script == nullptr || GodotJSScriptLanguage::get_singleton()->is_global_class_generic(script->get_path()))
+    if (descriptor_script == nullptr || GodotJSScriptLanguage::get_singleton()->is_global_class_generic(descriptor_script->get_path()))
     {
         descriptor[jsb_string_name(type)] = (int32_t) DescriptorType::Godot;
         descriptor[jsb_string_name(name)] = GodotJSEditorHelper::_get_exposed_node_class_name(resource->get_class_name());
     }
     else
     {
-        String class_name = script->is_valid()
-            ? static_cast<String>(script->get_global_name())
+        String class_name = descriptor_script->is_valid()
+            ? static_cast<String>(descriptor_script->get_global_name())
             : ResourceLoader::get_resource_script_class(p_path);
 
         if (class_name.is_empty())
@@ -405,12 +459,17 @@ Dictionary GodotJSEditorHelper::get_resource_type_descriptor(const String& p_pat
         else
         {
             descriptor[jsb_string_name(type)] = (int32_t) DescriptorType::User;
-            descriptor[jsb_string_name(name)] = script->get_global_name();
-            descriptor[jsb_string_name(resource)] = script->get_path();
+            descriptor[jsb_string_name(name)] = descriptor_script->get_global_name();
+            descriptor[jsb_string_name(resource)] = descriptor_script->get_path();
         }
     }
 
-    return descriptor;
+    codegen_info["descriptor"] = descriptor;
+    if (!script_rpc_info.is_empty())
+    {
+        codegen_info["rpc"] = script_rpc_info;
+    }
+    return codegen_info;
 }
 
 Dictionary GodotJSEditorHelper::get_scene_nodes(const String& p_path)

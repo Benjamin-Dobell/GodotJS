@@ -20,6 +20,7 @@ public:
     virtual ~GodotJSEditorHelper() override = default;
 
     static bool is_file_content_equal(const String &p_path, const String &p_content);
+    static Dictionary get_resource_codegen_info(const String &p_path);
     static Dictionary get_resource_type_descriptor(const String &p_path);
     static Dictionary get_scene_nodes(const String &p_path);
     static void show_toast(const String& p_text, int p_severity);

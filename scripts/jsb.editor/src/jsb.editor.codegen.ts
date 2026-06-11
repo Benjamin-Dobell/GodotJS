@@ -3918,22 +3918,11 @@ export class SceneTSDCodeGen {
 export class ResourceTSDCodeGen {
     private _out_dir: string;
     private _resource_paths: string[];
-    private _script_extensions: string[];
     private _types: TypeDB;
 
     constructor(out_dir: string, resource_paths: string[]) {
         this._out_dir = out_dir;
         this._resource_paths = resource_paths;
-
-        const recognized_extensions = godot.ResourceLoader.get_recognized_extensions_for_type("Script");
-        const length = recognized_extensions.size();
-        const script_extensions = new Array<string>(length);
-
-        for (let i = 0; i < length; i++) {
-            script_extensions[i] = recognized_extensions.get(i);
-        }
-
-        this._script_extensions = script_extensions;
         this._types = new TypeDB();
     }
 
@@ -3961,42 +3950,22 @@ export class ResourceTSDCodeGen {
         return tasks.submit();
     }
 
-    private get_script_rpc_info(resource_path: string): null | { class_name: string; methods: string[] } {
-        const extension = resource_path.slice(resource_path.lastIndexOf('.') + 1);
+    private normalize_script_rpc_methods(value: unknown): null | string[] {
+        const methods =
+            Array.isArray(value)
+                ? value
+                : value && typeof value === "object" && typeof (value as Iterable<unknown>)[Symbol.iterator] === "function"
+                    ? [...(value as Iterable<unknown>)]
+                    : null;
 
-        if (!this._script_extensions.includes(extension)) {
-            return null;
-        }
-
-        const resource_loader = godot.ResourceLoader;
-
-        let script: unknown;
-
-        try {
-            script = resource_loader.load(resource_path);
-        } catch (e) {
-            console.warn(`Failed to generate RPC types for script: ${resource_path}`, e);
-            return null;
-        }
-
-        if (!(script instanceof godot.Script)) {
-            return null;
-        }
-
-        const class_name = script.get_global_name();
-        const rpc_config = script.get_rpc_config();
-        const methods = [...rpc_config.keys()].filter(name => name).sort();
-
-        if (methods.length === 0) {
-            return null;
-        }
-
-        return { class_name, methods };
+        return methods && methods.every(method => typeof method === "string") ? methods as string[] : null;
     }
 
-    private emit_script_rpc_types(module: ModuleWriter, resource_path: string) {
-        const script_rpc_info = this.get_script_rpc_info(resource_path);
-
+    private emit_script_rpc_types(
+        module: ModuleWriter,
+        resource_path: string,
+        script_rpc_info: null | { class_name: string; methods: string[] },
+    ) {
         if (!script_rpc_info) {
             return;
         }
@@ -4027,8 +3996,21 @@ export class ResourceTSDCodeGen {
 
     private emit_resource_type(resource_path: string) {
         try {
-            const helper = godot.GodotJSEditorHelper;
-            const descriptor = (helper.get_resource_type_descriptor(resource_path) as undefined | TypeDescriptor)?.proxy();
+            const helper = godot.GodotJSEditorHelper as typeof godot.GodotJSEditorHelper & {
+                get_resource_codegen_info(
+                    resource_path: string,
+                ): undefined | { proxy(): { descriptor?: TypeDescriptor; rpc?: { class_name?: string; methods?: unknown } } };
+            };
+            const codegen_info = helper.get_resource_codegen_info(resource_path)?.proxy();
+            const descriptor = codegen_info?.descriptor;
+            const rpc_methods = this.normalize_script_rpc_methods(codegen_info?.rpc?.methods);
+            const script_rpc_info =
+                typeof codegen_info?.rpc?.class_name === "string" && rpc_methods
+                    ? {
+                          class_name: codegen_info.rpc.class_name,
+                          methods: rpc_methods,
+                      }
+                    : null;
 
             if (typeof descriptor !== "object") {
                 throw new Error(`resource type unavailable: ${resource_path}`);
@@ -4047,12 +4029,12 @@ export class ResourceTSDCodeGen {
             const resource_types_interface = new InterfaceWriter(module, "ResourceTypes");
             const resource_property = resource_types_interface.property_(resource_path);
             const type_descriptor = new TypeDescriptorWriter(resource_property, true);
-            type_descriptor.serialize_type_descriptor(descriptor);
+            type_descriptor.serialize_type_descriptor(descriptor as unknown as GReadProxyValueWrap<TypeDescriptor>);
             type_descriptor.finish();
             resource_property.finish();
             resource_types_interface.finish();
 
-            this.emit_script_rpc_types(module, resource_path);
+            this.emit_script_rpc_types(module, resource_path, script_rpc_info);
 
             module.finish();
             file_writer.finish();
