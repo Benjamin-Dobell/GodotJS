@@ -2969,11 +2969,11 @@ class PropertyWriter extends BufferingWriter {
 }
 
 class FileWriter extends AbstractWriter {
-    private _file: FileAccess;
     private _size = 0;
     private _lineno = 0;
     private _types: TypeDB;
     private _path: string;
+    private _chunks: string[] = [];
     private _import_map: Record<string, Record<string, string>> = {};
     private _import_names = new Set<string>();
 
@@ -2990,11 +2990,10 @@ class FileWriter extends AbstractWriter {
         return preferred_name;
     }
 
-    constructor(path: string, types: TypeDB, file: FileAccess) {
+    constructor(path: string, types: TypeDB) {
         super();
         this._path = path;
         this._types = types;
-        this._file = file;
     }
 
     add_import(preferred_name: string, script_resource: string, export_name = "default"): void {
@@ -3040,38 +3039,55 @@ class FileWriter extends AbstractWriter {
     }
 
     line(text: string): void {
-        this._file.store_line(text);
+        this._chunks.push(text, "\n");
         this._size += text.length + 1;
         this._lineno += 1;
     }
 
     concatenate(text: string): void {
-        this._file.store_string(text);
+        this._chunks.push(text);
         this._size += text.length;
     }
 
     finish(): void {
-        this._file.flush();
+        const text = this._chunks.join("");
+        const helper = godot.GodotJSEditorHelper as typeof godot.GodotJSEditorHelper & {
+            is_file_content_equal(path: string, content: string): boolean;
+        };
+
+        if (helper.is_file_content_equal(this._path, text)) {
+            return;
+        }
+
+        const file = godot.FileAccess.open(this._path, godot.FileAccess.ModeFlags.WRITE);
+        if (!file) {
+            throw new Error(`failed to open file for writing: ${this._path}`);
+        }
+
+        try {
+            file.store_string(text);
+            file.flush();
+        } finally {
+            file.close();
+        }
     }
 }
 
 class FileSplitter {
-    private _file: FileAccess;
+    private _fileWriter: FileWriter;
     private _toplevel: ModuleWriter;
     private _types: TypeDB;
 
     constructor(types: TypeDB, path: string) {
         this._types = types;
-        this._file = godot.FileAccess.open(path, godot.FileAccess.ModeFlags.WRITE);
-        this._toplevel = new ModuleWriter(new FileWriter(path, this._types, this._file), "godot");
-
-        this._file.store_line("// AUTO-GENERATED");
+        this._fileWriter = new FileWriter(path, this._types);
+        this._toplevel = new ModuleWriter(this._fileWriter, "godot");
+        this._toplevel.line("// AUTO-GENERATED");
     }
 
     close() {
         this._toplevel.finish();
-        this._file.flush();
-        this._file.close();
+        this._fileWriter.finish(); // ModuleWriter won't close base
     }
 
     get_writer() {
@@ -3530,32 +3546,21 @@ export class TSDCodeGen {
         tasks.add_task("jsb.runtime", () => {
             const path = "/jsb.runtime.gen.d.ts";
             const dir_path = this._out_dir + path;
-            const file = godot.FileAccess.open(dir_path, godot.FileAccess.ModeFlags.WRITE);
+            const runtime_gen = new FileWriter(dir_path, this._types);
+            const module = new ModuleWriter(runtime_gen, "godot.annotations");
 
-            if (!file) {
-                throw new Error(`failed to open file for writing: ${dir_path}`);
+            module.line('import * as Godot from "godot";');
+            module.line('import * as GodotJsb from "godot-jsb";');
+
+            for (const [name, descriptor] of Object.entries(annotation_types)) {
+                module.line(`type ${names.get_class(name)} = `);
+                const type_descriptor = new TypeDescriptorWriter(module, true);
+                type_descriptor.serialize_type_descriptor(descriptor.proxy());
+                type_descriptor.finish();
             }
 
-            const runtime_gen = new FileWriter(dir_path, this._types, file);
-
-            try {
-                const module = new ModuleWriter(runtime_gen, "godot.annotations");
-
-                module.line('import * as Godot from "godot";');
-                module.line('import * as GodotJsb from "godot-jsb";');
-
-                for (const [name, descriptor] of Object.entries(annotation_types)) {
-                    module.line(`type ${names.get_class(name)} = `);
-                    const type_descriptor = new TypeDescriptorWriter(module, true);
-                    type_descriptor.serialize_type_descriptor(descriptor.proxy());
-                    type_descriptor.finish();
-                }
-
-                module.finish();
-                runtime_gen.finish();
-            } finally {
-                file.close();
-            }
+            module.finish();
+            runtime_gen.finish();
         });
 
         tasks.add_task("Cleanup", () => {
@@ -3894,25 +3899,15 @@ export class SceneTSDCodeGen {
             }
 
             const file_path = this.make_scene_path(scene_path);
-            const file = godot.FileAccess.open(file_path, godot.FileAccess.ModeFlags.WRITE);
-
-            if (!file) {
-                throw new Error(`failed to open file for writing: ${dir_path}`);
-            }
-
-            try {
-                const file_writer = new FileWriter(file_path, this._types, file);
-                const module = new ModuleWriter(file_writer, "godot");
-                const scene_nodes_interface = new InterfaceWriter(module, "SceneNodes");
-                const scene_property = scene_nodes_interface.property_(scene_path.replace(/^res:\/\//, ""));
-                this.emit_children_node_types(scene_property, children);
-                scene_property.finish();
-                scene_nodes_interface.finish();
-                module.finish();
-                file_writer.finish();
-            } finally {
-                file.close();
-            }
+            const file_writer = new FileWriter(file_path, this._types);
+            const module = new ModuleWriter(file_writer, "godot");
+            const scene_nodes_interface = new InterfaceWriter(module, "SceneNodes");
+            const scene_property = scene_nodes_interface.property_(scene_path.replace(/^res:\/\//, ""));
+            this.emit_children_node_types(scene_property, children);
+            scene_property.finish();
+            scene_nodes_interface.finish();
+            module.finish();
+            file_writer.finish();
         } catch (error) {
             console.error(`failed to generate scene node types: ${scene_path}`);
             throw error;
@@ -4033,9 +4028,7 @@ export class ResourceTSDCodeGen {
     private emit_resource_type(resource_path: string) {
         try {
             const helper = godot.GodotJSEditorHelper;
-            const descriptor = (
-                helper.get_resource_type_descriptor(resource_path) as undefined | TypeDescriptor
-            )?.proxy();
+            const descriptor = (helper.get_resource_type_descriptor(resource_path) as undefined | TypeDescriptor)?.proxy();
 
             if (typeof descriptor !== "object") {
                 throw new Error(`resource type unavailable: ${resource_path}`);
@@ -4049,30 +4042,20 @@ export class ResourceTSDCodeGen {
             }
 
             const file_path = this.make_resource_path(resource_path);
-            const file = godot.FileAccess.open(file_path, godot.FileAccess.ModeFlags.WRITE);
+            const file_writer = new FileWriter(file_path, this._types);
+            const module = new ModuleWriter(file_writer, "godot");
+            const resource_types_interface = new InterfaceWriter(module, "ResourceTypes");
+            const resource_property = resource_types_interface.property_(resource_path);
+            const type_descriptor = new TypeDescriptorWriter(resource_property, true);
+            type_descriptor.serialize_type_descriptor(descriptor);
+            type_descriptor.finish();
+            resource_property.finish();
+            resource_types_interface.finish();
 
-            if (!file) {
-                throw new Error(`failed to open file for writing: ${dir_path}`);
-            }
+            this.emit_script_rpc_types(module, resource_path);
 
-            try {
-                const file_writer = new FileWriter(file_path, this._types, file);
-                const module = new ModuleWriter(file_writer, "godot");
-                const resource_types_interface = new InterfaceWriter(module, "ResourceTypes");
-                const resource_property = resource_types_interface.property_(resource_path);
-                const type_descriptor = new TypeDescriptorWriter(resource_property, true);
-                type_descriptor.serialize_type_descriptor(descriptor);
-                type_descriptor.finish();
-                resource_property.finish();
-                resource_types_interface.finish();
-
-                this.emit_script_rpc_types(module, resource_path);
-
-                module.finish();
-                file_writer.finish();
-            } finally {
-                file.close();
-            }
+            module.finish();
+            file_writer.finish();
         } catch (error) {
             console.error(`failed to generate resource type: ${resource_path}`);
             throw error;

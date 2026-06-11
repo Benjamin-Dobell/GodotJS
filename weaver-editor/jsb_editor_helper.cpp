@@ -310,8 +310,28 @@ void GodotJSEditorHelper::_log_load_error(const String &p_file, const String &p_
 void GodotJSEditorHelper::_bind_methods()
 {
     ClassDB::bind_static_method(jsb_typename(GodotJSEditorHelper), D_METHOD("show_toast", "text", "severity"), &GodotJSEditorHelper::show_toast);
+    ClassDB::bind_static_method(jsb_typename(GodotJSEditorHelper), D_METHOD("is_file_content_equal", "path", "content"), &GodotJSEditorHelper::is_file_content_equal);
     ClassDB::bind_static_method(jsb_typename(GodotJSEditorHelper), D_METHOD("get_resource_type_descriptor", "resource_path"), &GodotJSEditorHelper::get_resource_type_descriptor);
     ClassDB::bind_static_method(jsb_typename(GodotJSEditorHelper), D_METHOD("get_scene_nodes", "scene_path"), &GodotJSEditorHelper::get_scene_nodes);
+}
+
+bool GodotJSEditorHelper::is_file_content_equal(const String& p_path, const String& p_content)
+{
+    const String path = p_path.contains("://") ? p_path : ProjectSettings::get_singleton()->globalize_path(p_path);
+
+    if (!FileAccess::exists(path))
+    {
+        return false;
+    }
+
+    Error err = OK;
+    const String existing_content = FileAccess::get_file_as_string(path, &err);
+    if (err != OK)
+    {
+        return false;
+    }
+
+    return existing_content == p_content;
 }
 
 Dictionary GodotJSEditorHelper::get_resource_type_descriptor(const String& p_path)
