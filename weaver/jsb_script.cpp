@@ -280,7 +280,38 @@ Vector<DocData::ClassDoc> GodotJSScript::get_documentation() const
     if (!loaded_ || !_is_valid()) return {};
 
     String base_type;
-    const String class_name = GodotJSScriptLanguage::get_singleton()->get_global_class_name(get_path(), &base_type);
+    String class_name = script_class_info_.js_class_name;
+
+    if (script_class_info_.base_script_module_id)
+    {
+        jsb::JSEnvironment env(get_path(), true);
+        jsb::JavaScriptModule* base_module = nullptr;
+
+        if (env->load(script_class_info_.base_script_module_id, &base_module) == OK && base_module)
+        {
+            if (const jsb::ScriptClassInfoPtr base_class_info = env->find_script_class(base_module->script_class_id))
+            {
+                base_type = base_class_info->js_class_name;
+            }
+        }
+    }
+
+    if (base_type.is_empty() && base.is_valid())
+    {
+        base_type = base->get_global_name();
+    }
+
+    if (base_type.is_empty())
+    {
+        base_type = script_class_info_.native_class_name;
+    }
+
+    if (class_name.is_empty())
+    {
+        JSB_LOG(Warning, "Skipping documentation for script with unresolved class name %s", get_path());
+        return {};
+    }
+
     DocData::ClassDoc class_doc_data;
 
     class_doc_data.name = class_name;
