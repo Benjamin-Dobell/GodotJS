@@ -1313,35 +1313,25 @@ namespace jsb
                 return "";
             }
             v8::HandleScope handle_scope(isolate_);
+#if !JSB_WITH_WEB
             v8::Local<v8::StackTrace> stack = v8::StackTrace::CurrentStackTrace(isolate_, 6, v8::StackTrace::kDetailed);
             const int frame_count = stack->GetFrameCount();
             for (int i = 0; i < frame_count; i++)
             {
                 v8::Local<v8::StackFrame> frame = stack->GetFrame(isolate_, i);
-                v8::Local<v8::String> script_name_value = frame->GetScriptName();
-                if (script_name_value.IsEmpty())
+                const String script_name = impl::Helper::to_string(isolate_, frame->GetScriptName());
+                if (script_name.is_empty() || script_name.find("jsb_") != -1 || script_name.find("modules/GodotJS/") != -1)
                 {
                     continue;
                 }
 
-                v8::String::Utf8Value script_name_utf8(isolate_, script_name_value);
-                if (script_name_utf8.length() <= 0)
-                {
-                    continue;
-                }
-                const String script_name = String(*script_name_utf8);
-                if (script_name.find("jsb_") != -1 || script_name.find("modules/GodotJS/") != -1)
-                {
-                    continue;
-                }
-
-                v8::Local<v8::String> function_name_value = frame->GetFunctionName();
-                v8::String::Utf8Value function_name_utf8(isolate_, function_name_value);
-                const String function_name = function_name_utf8.length() > 0 ? String(*function_name_utf8) : String("<anonymous>");
+                const String function_name_value = impl::Helper::to_string(isolate_, frame->GetFunctionName());
+                const String function_name = function_name_value.is_empty() ? String("<anonymous>") : function_name_value;
                 const int line = frame->GetLineNumber();
                 const int column = frame->GetColumn();
                 return vformat("%s:%d:%d (%s)", script_name, line, column, function_name);
             }
+#endif
             return "";
         };
 

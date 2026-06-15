@@ -269,6 +269,8 @@ namespace v8
             jsbi_handle_SetWeak(jsb::impl::Broker::get_engine(isolate_), value_);
         }
 
+        bool IsWeak() const { return weak_type_ != WeakType::kStrong; }
+
         // Return true if no value held by this handle, or dead for a weak handle.
         bool IsEmpty() const { return !isolate_ || !is_alive(); }
 
