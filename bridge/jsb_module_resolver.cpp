@@ -274,17 +274,22 @@ namespace jsb
     bool DefaultModuleResolver::check_absolute_file_path(const String& p_module_id, ModuleSourceInfo& o_source_info)
     {
         // 1: module_id (we do not check it strictly here, but usually, it should already have a valid extension)
-        if (p_module_id.contains(".") && FileAccess::exists(p_module_id))
+        const bool has_known_source_extension =
+            p_module_id.ends_with("." JSB_JAVASCRIPT_EXT)
+            || p_module_id.ends_with("." JSB_COMMONJS_EXT)
+            || p_module_id.ends_with("." JSB_MODULE_EXT)
+            || p_module_id.ends_with("." JSB_JSON_EXT);
+
+        if (has_known_source_extension && FileAccess::exists(p_module_id))
         {
             o_source_info.source_filepath = p_module_id;
             o_source_info.package_filepath = String();
             return true;
         }
 
-        const bool has_module_id_dir = DirAccess::exists(p_module_id);
-
         // 2: implicit file path (module_id.js, module_id.cjs)
-        if (String source_path; check_implicit_source_path(p_module_id, source_path))
+        String source_path;
+        if (!has_known_source_extension && check_implicit_source_path(p_module_id, source_path))
         {
             o_source_info.source_filepath = source_path;
             o_source_info.package_filepath = String();
@@ -292,21 +297,17 @@ namespace jsb
             return true;
         }
 
-        // 3: module_id/index.js
-        if (has_module_id_dir)
+        // 3: package.json + index fallback for directories
+        if (check_package_file_path(p_module_id, String(), o_source_info))
         {
-            if (check_package_file_path(p_module_id, String(), o_source_info))
-            {
-                return true;
-            }
+            return true;
+        }
 
-            const String index_path = internal::PathUtil::combine(p_module_id, "index.js");
-            if (FileAccess::exists(index_path))
-            {
-                o_source_info.source_filepath = index_path;
-                o_source_info.package_filepath = String();
-                return true;
-            }
+        if (check_implicit_source_path(internal::PathUtil::combine(p_module_id, "index"), source_path))
+        {
+            o_source_info.source_filepath = source_path;
+            o_source_info.package_filepath = String();
+            return true;
         }
 
         return false;
