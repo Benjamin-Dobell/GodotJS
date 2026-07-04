@@ -576,7 +576,10 @@ if is_defined("JSB_WITH_WEB"):
 
     # this script is compiled from impl/web/bridge typescript source
     env.AddJSPre([ "impl/web/js/jsbb.impl.js" ])
-    env.AddJSLibraries([ "impl/web/js/library_godotjs_jsbi.js" ])
+    env.AddJSLibraries([
+        "impl/web/js/library_godotjs_jsbi.js",
+        "impl/web/js/library_godotjs_websocket_server.js",
+    ])
 
 if is_defined("JSB_WITH_JAVASCRIPTCORE"):
     env_jsb.add_source_files(module_obj, "impl/jsc/*.cpp")

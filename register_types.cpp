@@ -1,6 +1,11 @@
 #include "register_types.h"
 
+#include "jsb.config.h"
 #include "weaver/jsb_weaver.h"
+
+#if JSB_WITH_WEB
+#include "impl/web/jsb_web_websocket_server.h"
+#endif
 
 #ifdef TOOLS_ENABLED
 #include "weaver-editor/jsb_weaver_editor.h"
@@ -13,6 +18,10 @@ void jsb_initialize_module(ModuleInitializationLevel p_level)
 {
     if (p_level == MODULE_INITIALIZATION_LEVEL_SERVERS)
     {
+#if JSB_WITH_WEB
+        jsb::impl::initialize_websocket_server();
+#endif
+
         GDREGISTER_CLASS(GodotJSScript);
         GDREGISTER_CLASS(GodotJSObjectDBSnapshot);
 #ifdef TOOLS_ENABLED
