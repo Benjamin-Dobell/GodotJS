@@ -2,6 +2,8 @@
 #include "jsb_environment.h"
 
 #include "../internal/jsb_path_util.h"
+#include "../internal/jsb_web_commonjs_manifest.h"
+
 #if JSB_WITH_V8
 #include "core/crypto/crypto_core.h"
 #include "core/io/dir_access.h"
@@ -23,6 +25,85 @@ namespace jsb
             return dynamic_search_paths;
 #endif
         }
+
+#if JSB_WITH_WEB
+        static constexpr char kGodotJSHostRequire[] = "__godotjs_host_require";
+
+        bool get_web_host_require(Environment* p_env, v8::Local<v8::Function>& r_require)
+        {
+            if (!p_env)
+            {
+                return false;
+            }
+
+            v8::Isolate* isolate = p_env->get_isolate();
+            const v8::Local<v8::Context> context = p_env->get_context();
+            v8::Local<v8::Value> require_val;
+            if (!context->Global()->Get(context, impl::Helper::new_string_ascii(isolate, kGodotJSHostRequire)).ToLocal(&require_val) ||
+                !require_val->IsFunction())
+            {
+                return false;
+            }
+
+            r_require = require_val.As<v8::Function>();
+            return true;
+        }
+
+        bool has_web_host_require(Environment* p_env)
+        {
+            v8::Local<v8::Function> require_func;
+            return get_web_host_require(p_env, require_func);
+        }
+
+        bool is_web_host_require_candidate(Environment* p_env, const String& p_path)
+        {
+            return has_web_host_require(p_env) &&
+                internal::WebCommonJSManifest::has_path(p_path) &&
+                (internal::PathUtil::is_recognized_javascript_extension(p_path) || p_path.ends_with("." JSB_JSON_EXT));
+        }
+
+        String to_web_host_require_id(const String& p_asset_path)
+        {
+            return p_asset_path.begins_with("res://")
+                ? "./" + p_asset_path.substr(6)
+                : p_asset_path;
+        }
+
+        bool load_with_web_host_require(Environment* p_env, JavaScriptModule& p_module, const String& p_asset_path)
+        {
+            v8::Local<v8::Function> require_func;
+            if (!get_web_host_require(p_env, require_func))
+            {
+                return false;
+            }
+
+            v8::Isolate* isolate = p_env->get_isolate();
+            const v8::Local<v8::Context> context = p_env->get_context();
+            const String require_id = to_web_host_require_id(p_asset_path);
+            v8::Local<v8::Value> argv[] = {
+                impl::Helper::new_string(isolate, require_id),
+            };
+
+            v8::Local<v8::Value> loaded_value;
+            if (!require_func->Call(context, v8::Undefined(isolate), 1, argv).ToLocal(&loaded_value))
+            {
+                return false;
+            }
+
+            if (loaded_value->IsFunction())
+            {
+                return IModuleResolver::load_from_evaluator(p_env, p_module, p_asset_path, loaded_value.As<v8::Function>());
+            }
+
+            const String dirname = internal::PathUtil::dirname(p_asset_path);
+            const v8::Local<v8::Object> module_obj = p_module.module.Get(isolate);
+            module_obj->Set(context, jsb_name(p_env, filename), impl::Helper::new_string(isolate, p_asset_path)).Check();
+            module_obj->Set(context, jsb_name(p_env, path), impl::Helper::new_string(isolate, dirname)).Check();
+            module_obj->Set(context, jsb_name(p_env, exports), loaded_value).Check();
+            p_module.exports.Reset(isolate, loaded_value);
+            return true;
+        }
+#endif
 
 #if JSB_WITH_V8
         static constexpr char kV8CodeCacheMagic[] = "JSBV8CC1";
@@ -672,11 +753,15 @@ namespace jsb
     }
 
     //NOTE !!! we use FileAccess::exists instead of access->file_exists because access->file_exists does not consider files from packages (res://)
-    bool DefaultModuleResolver::check_implicit_source_path(const String& p_module_id, String& o_path)
+    bool DefaultModuleResolver::check_implicit_source_path(Environment* p_env, const String& p_module_id, String& o_path)
     {
         // try .js
         const String js_path = internal::PathUtil::extends_with(p_module_id, "." JSB_JAVASCRIPT_EXT);
-        if (FileAccess::exists(js_path))
+        if (FileAccess::exists(js_path)
+#if JSB_WITH_WEB
+            || is_web_host_require_candidate(p_env, js_path)
+#endif
+            )
         {
             o_path = js_path;
             return true;
@@ -684,7 +769,11 @@ namespace jsb
 
         // try .cjs
         const String cjs_path = internal::PathUtil::extends_with(p_module_id, "." JSB_COMMONJS_EXT);
-        if (FileAccess::exists(cjs_path))
+        if (FileAccess::exists(cjs_path)
+#if JSB_WITH_WEB
+            || is_web_host_require_candidate(p_env, cjs_path)
+#endif
+            )
         {
             o_path = cjs_path;
             return true;
@@ -692,7 +781,11 @@ namespace jsb
 
         // try .mjs
         const String mjs_path = internal::PathUtil::extends_with(p_module_id, "." JSB_MODULE_EXT);
-        if (FileAccess::exists(mjs_path))
+        if (FileAccess::exists(mjs_path)
+#if JSB_WITH_WEB
+            || is_web_host_require_candidate(p_env, mjs_path)
+#endif
+            )
         {
             o_path = mjs_path;
             return true;
@@ -700,7 +793,11 @@ namespace jsb
 
         // try .json
         const String json_path = internal::PathUtil::extends_with(p_module_id, "." JSB_JSON_EXT);
-        if (FileAccess::exists(json_path))
+        if (FileAccess::exists(json_path)
+#if JSB_WITH_WEB
+            || is_web_host_require_candidate(p_env, json_path)
+#endif
+            )
         {
             o_path = json_path;
             return true;
@@ -837,7 +934,7 @@ namespace jsb
     }
 
 
-    bool DefaultModuleResolver::check_absolute_file_path(const String& p_module_id, ModuleSourceInfo& o_source_info)
+    bool DefaultModuleResolver::check_absolute_file_path(Environment* p_env, const String& p_module_id, ModuleSourceInfo& o_source_info)
     {
         // 1: module_id (we do not check it strictly here, but usually, it should already have a valid extension)
         const bool has_known_source_extension =
@@ -846,7 +943,12 @@ namespace jsb
             || p_module_id.ends_with("." JSB_MODULE_EXT)
             || p_module_id.ends_with("." JSB_JSON_EXT);
 
-        if (has_known_source_extension && FileAccess::exists(p_module_id))
+        if (has_known_source_extension &&
+            (FileAccess::exists(p_module_id)
+#if JSB_WITH_WEB
+            || is_web_host_require_candidate(p_env, p_module_id)
+#endif
+            ))
         {
             o_source_info.source_filepath = p_module_id;
             o_source_info.package_filepath = String();
@@ -855,7 +957,7 @@ namespace jsb
 
         // 2: implicit file path (module_id.js, module_id.cjs)
         String source_path;
-        if (!has_known_source_extension && check_implicit_source_path(p_module_id, source_path))
+        if (!has_known_source_extension && check_implicit_source_path(p_env, p_module_id, source_path))
         {
             o_source_info.source_filepath = source_path;
             o_source_info.package_filepath = String();
@@ -864,12 +966,12 @@ namespace jsb
         }
 
         // 3: package.json + index fallback for directories
-        if (check_package_file_path(p_module_id, String(), o_source_info))
+        if (check_package_file_path(p_env, p_module_id, String(), o_source_info))
         {
             return true;
         }
 
-        if (check_implicit_source_path(internal::PathUtil::combine(p_module_id, "index"), source_path))
+        if (check_implicit_source_path(p_env, internal::PathUtil::combine(p_module_id, "index"), source_path))
         {
             o_source_info.source_filepath = source_path;
             o_source_info.package_filepath = String();
@@ -879,7 +981,7 @@ namespace jsb
         return false;
     }
 
-    bool DefaultModuleResolver::check_package_file_path(const String& p_package_path, const String& p_module_id, ModuleSourceInfo& o_source_info)
+    bool DefaultModuleResolver::check_package_file_path(Environment* p_env, const String& p_package_path, const String& p_module_id, ModuleSourceInfo& o_source_info)
     {
         if (!DirAccess::exists(p_package_path))
         {
@@ -972,7 +1074,7 @@ namespace jsb
                 return false;
             }
 
-            return this->check_absolute_file_path(internal::PathUtil::combine(p_package_path, p_module_id), o_source_info);
+            return this->check_absolute_file_path(p_env, internal::PathUtil::combine(p_package_path, p_module_id), o_source_info);
         }
 
         const String relative_exported_path = resolve_package_export(package_exports, "require", p_module_id);
@@ -991,7 +1093,11 @@ namespace jsb
             return false;
         }
 
-        if (!FileAccess::exists(extracted_path))
+        if (!FileAccess::exists(extracted_path)
+#if JSB_WITH_WEB
+            && !is_web_host_require_candidate(p_env, extracted_path)
+#endif
+            )
         {
             return false;
         }
@@ -1002,14 +1108,14 @@ namespace jsb
     }
 
     // early and simple validation: check source file existence
-    bool DefaultModuleResolver::get_source_info(const String &p_module_id, ModuleSourceInfo& r_source_info)
+    bool DefaultModuleResolver::get_source_info(Environment* p_env, const String &p_module_id, ModuleSourceInfo& r_source_info)
     {
         JSB_LOG(VeryVerbose, "resolving path %s", p_module_id);
 
         // directly inspect it at first if it's an absolute path
         if (internal::PathUtil::is_absolute_path(p_module_id))
         {
-            if (check_absolute_file_path(p_module_id, r_source_info))
+            if (check_absolute_file_path(p_env, p_module_id, r_source_info))
             {
                 return true;
             }
@@ -1027,7 +1133,7 @@ namespace jsb
         // search the statically configured paths
         for (const String& search_path : search_paths_)
         {
-            if (check_search_path(search_path, p_module_id, r_source_info))
+            if (check_search_path(p_env, search_path, p_module_id, r_source_info))
             {
                 return true;
             }
@@ -1036,7 +1142,7 @@ namespace jsb
         // search the paths from settings
         for (const String& search_path : get_dynamic_search_paths())
         {
-            if (check_search_path(search_path, p_module_id, r_source_info))
+            if (check_search_path(p_env, search_path, p_module_id, r_source_info))
             {
                 return true;
             }
@@ -1046,7 +1152,7 @@ namespace jsb
         return false;
     }
 
-    bool DefaultModuleResolver::check_search_path(const String& p_search_path, const String& p_module_id, ModuleSourceInfo& o_source_info)
+    bool DefaultModuleResolver::check_search_path(Environment* p_env, const String& p_search_path, const String& p_module_id, ModuleSourceInfo& o_source_info)
     {
         if (p_module_id[0] != '.')
         {
@@ -1064,7 +1170,7 @@ namespace jsb
                 const String absolute_package_path = internal::PathUtil::combine(p_search_path, package_name);
                 const String file_path = p_module_id.substr(package_name.length() + 1);
 
-                if (check_package_file_path(absolute_package_path, file_path, o_source_info))
+                if (check_package_file_path(p_env, absolute_package_path, file_path, o_source_info))
                 {
                     return true;
                 }
@@ -1073,7 +1179,7 @@ namespace jsb
 
         const String absolute_file_path = internal::PathUtil::combine(p_search_path, p_module_id);
 
-        if (check_absolute_file_path(absolute_file_path, o_source_info))
+        if (check_absolute_file_path(p_env, absolute_file_path, o_source_info))
         {
             return true;
         }
@@ -1095,6 +1201,12 @@ namespace jsb
 
     bool DefaultModuleResolver::load(Environment* p_env, const String& p_asset_path, JavaScriptModule& p_module)
     {
+#if JSB_WITH_WEB
+        if (!FileAccess::exists(p_asset_path) && is_web_host_require_candidate(p_env, p_asset_path))
+        {
+            return load_with_web_host_require(p_env, p_module, p_asset_path);
+        }
+#endif
         internal::FileAccessSourceReader reader(p_asset_path);
         return load(p_env, p_asset_path, reader, p_module);
     }

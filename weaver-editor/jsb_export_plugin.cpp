@@ -1,12 +1,18 @@
 ﻿#include "jsb_export_plugin.h"
 
+#include "../internal/jsb_web_commonjs_manifest.h"
 #include "../weaver/jsb_script.h"
 #include "core/io/config_file.h"
+#include "core/io/json.h"
 
 #define JSB_EXPORTER_LOG(Severity, Format, ...) JSB_LOG_IMPL(JSExporter, Severity, Format, ##__VA_ARGS__)
 
 namespace
 {
+    static constexpr char kWebCommonJSExportOption[] = JSB_MODULE_NAME_STRING "/web_commonjs/enabled";
+    static constexpr char kCommonJSWrapperHeader[] = "module.exports = function(exports,require,module,__filename,__dirname){";
+    static constexpr char kCommonJSWrapperFooter[] = "\n};\n";
+
 #if JSB_WITH_V8
     static constexpr char kGeneratedV8OverridePath[] = "res://.godotjs_v8_export_override.cfg";
 
@@ -152,6 +158,86 @@ PackedStringArray GodotJSExportPlugin::_get_export_features(const Ref<EditorExpo
     return {};
 }
 
+void GodotJSExportPlugin::_get_export_options(const Ref<EditorExportPlatform>& p_export_platform, List<EditorExportPlatform::ExportOption>* r_options) const
+{
+    r_options->push_back(EditorExportPlatform::ExportOption(PropertyInfo(Variant::BOOL, kWebCommonJSExportOption), false, true));
+}
+
+bool GodotJSExportPlugin::_get_export_option_visibility(const Ref<EditorExportPlatform>& p_export_platform, const String& p_option_name) const
+{
+    if (p_option_name == kWebCommonJSExportOption)
+    {
+        return is_web_platform(p_export_platform);
+    }
+    return true;
+}
+
+bool GodotJSExportPlugin::is_web_platform(const Ref<EditorExportPlatform>& p_export_platform)
+{
+    return p_export_platform.is_valid() && p_export_platform->get_name().to_lower() == "web";
+}
+
+bool GodotJSExportPlugin::is_javascript_like_file(const String& p_path)
+{
+    return jsb::internal::PathUtil::is_recognized_javascript_extension(p_path);
+}
+
+bool GodotJSExportPlugin::is_commonjs_external_file(const String& p_path)
+{
+    return is_javascript_like_file(p_path) || p_path.ends_with("." JSB_JSON_EXT);
+}
+
+String GodotJSExportPlugin::normalize_commonjs_packed_script_path(const String& p_path)
+{
+    String normalized_path = p_path.strip_edges().replace("\\", "/");
+    if (normalized_path.is_empty())
+    {
+        return String();
+    }
+
+    if (!normalized_path.begins_with("res://"))
+    {
+        while (normalized_path.begins_with("/"))
+        {
+            normalized_path = normalized_path.substr(1);
+        }
+        normalized_path = "res://" + normalized_path;
+    }
+
+    while (normalized_path.length() > 6 && normalized_path.ends_with("/"))
+    {
+        normalized_path = normalized_path.substr(0, normalized_path.length() - 1);
+    }
+
+    return normalized_path;
+}
+
+String GodotJSExportPlugin::get_res_relative_path(const String& p_res_path)
+{
+    return p_res_path.begins_with("res://") ? p_res_path.substr(6) : String();
+}
+
+bool GodotJSExportPlugin::is_web_commonjs_export_enabled() const
+{
+    return web_commonjs_export_;
+}
+
+bool GodotJSExportPlugin::is_web_commonjs_packed_script_path(const String& p_path) const
+{
+    if (!is_web_commonjs_export_enabled() || !is_commonjs_external_file(p_path))
+    {
+        return false;
+    }
+
+    const String normalized_path = normalize_commonjs_packed_script_path(p_path);
+    if (normalized_path.is_empty())
+    {
+        return false;
+    }
+
+    return web_commonjs_packed_script_paths_.has(normalized_path);
+}
+
 void GodotJSExportPlugin::export_raw_files(const PackedStringArray &p_paths, bool p_permit_typescript)
 {
     for (const String& file_path : p_paths)
@@ -161,12 +247,20 @@ void GodotJSExportPlugin::export_raw_files(const PackedStringArray &p_paths, boo
 
         if (!file_path.ends_with("." JSB_TYPESCRIPT_EXT))
         {
-            export_raw_file(file_path, false);
+            if (is_web_commonjs_export_enabled() && file_path.get_file() == "package.json")
+            {
+                write_external_file_as(file_path, file_path, false);
+                export_raw_file(file_path, false);
+            }
+            else
+            {
+                export_external_or_raw_file(file_path, false);
+            }
         }
         else if (p_permit_typescript)
         {
             const String compiled_script_path = jsb::internal::PathUtil::convert_typescript_path(file_path);
-            export_raw_file(compiled_script_path, true);
+            export_external_or_raw_file(compiled_script_path, true);
         }
     }
 }
@@ -216,6 +310,31 @@ void GodotJSExportPlugin::_export_begin(const HashSet<String>& p_features, bool 
 {
     JSB_EXPORTER_LOG(Verbose, "export_begin path: %s", p_path);
     exported_paths_.clear();
+    external_paths_.clear();
+    web_commonjs_packed_script_paths_.clear();
+    web_commonjs_export_ = p_features.has("web") && (bool) get_option(kWebCommonJSExportOption);
+    web_commonjs_export_base_dir_ = web_commonjs_export_ ? p_path.get_base_dir() : String();
+    if (web_commonjs_export_)
+    {
+        const PackedStringArray packed_script_paths = jsb::internal::Settings::get_packaging_commonjs_packed_script_paths();
+        for (const String& packed_script_path : packed_script_paths)
+        {
+            const String normalized_path = normalize_commonjs_packed_script_path(packed_script_path);
+            if (normalized_path.is_empty())
+            {
+                continue;
+            }
+
+            if (!is_commonjs_external_file(normalized_path))
+            {
+                JSB_EXPORTER_LOG(Warning, "Ignoring Web CommonJS packed static asset with unsupported extension: %s", packed_script_path);
+                continue;
+            }
+
+            web_commonjs_packed_script_paths_.insert(normalized_path);
+        }
+        JSB_EXPORTER_LOG(Verbose, "Web CommonJS export enabled. Loose scripts will be written under %s", web_commonjs_export_base_dir_);
+    }
 
     // add all explicitly included file paths in settings
     const PackedStringArray file_paths = jsb::internal::Settings::get_packaging_include_files();
@@ -249,6 +368,10 @@ void GodotJSExportPlugin::_export_begin(const HashSet<String>& p_features, bool 
 #endif
 }
 
+void GodotJSExportPlugin::_export_end()
+{
+}
+
 bool GodotJSExportPlugin::export_raw_file_as(const String& p_source_path, const String& p_export_path, bool p_remap)
 {
     if (p_export_path.is_empty() || exported_paths_.has(p_export_path))
@@ -270,6 +393,163 @@ bool GodotJSExportPlugin::export_raw_file_as(const String& p_source_path, const 
 bool GodotJSExportPlugin::export_raw_file(const String& p_path, bool p_remap)
 {
     return export_raw_file_as(p_path, p_path, p_remap);
+}
+
+void GodotJSExportPlugin::write_web_commonjs_manifest_marker(const String& p_export_path)
+{
+    if (!is_web_commonjs_export_enabled())
+    {
+        return;
+    }
+
+    const String normalized_path = jsb::internal::WebCommonJSManifest::normalize_path(p_export_path);
+    const String marker_path = jsb::internal::WebCommonJSManifest::get_manifest_marker_path(normalized_path);
+    if (normalized_path.is_empty() || marker_path.is_empty() || exported_paths_.has(marker_path))
+    {
+        return;
+    }
+
+    Dictionary marker;
+    marker["format"] = jsb::internal::WebCommonJSManifest::get_manifest_format();
+    marker["version"] = 1;
+    marker["path"] = normalized_path;
+
+    Vector<uint8_t> marker_content = JSON::stringify(marker).to_utf8_buffer();
+    exported_paths_.insert(marker_path);
+    add_file(marker_path, marker_content, false);
+    JSB_EXPORTER_LOG(Verbose, "include Web CommonJS manifest marker: %s => %s", normalized_path, marker_path);
+}
+
+bool GodotJSExportPlugin::write_external_file_as(const String& p_source_path, const String& p_export_path, bool p_wrap_commonjs)
+{
+    const String relative_export_path = get_res_relative_path(p_export_path);
+    if (relative_export_path.is_empty())
+    {
+        JSB_EXPORTER_LOG(Warning, "can not export external CommonJS file outside res://: %s", p_export_path);
+        return false;
+    }
+    if (web_commonjs_export_base_dir_.is_empty())
+    {
+        JSB_EXPORTER_LOG(Warning, "can not export external CommonJS file without an export directory: %s", p_export_path);
+        return false;
+    }
+
+    const String absolute_export_path = web_commonjs_export_base_dir_.path_join(relative_export_path);
+    if (external_paths_.has(absolute_export_path))
+    {
+        if (is_commonjs_external_file(p_export_path))
+        {
+            write_web_commonjs_manifest_marker(p_export_path);
+        }
+        return true;
+    }
+
+    Error err;
+    const Vector<uint8_t> source = FileAccess::get_file_as_bytes(p_source_path, &err);
+    if (err != OK)
+    {
+        JSB_EXPORTER_LOG(Error, "can't read external CommonJS source from %s", p_source_path);
+        return false;
+    }
+
+    Vector<uint8_t> content;
+    if (p_wrap_commonjs)
+    {
+        const size_t header_len = sizeof(kCommonJSWrapperHeader) - 1;
+        const size_t footer_len = sizeof(kCommonJSWrapperFooter) - 1;
+        int source_offset = 0;
+        if (source.size() >= 2 && source[0] == '#' && source[1] == '!')
+        {
+            while (source_offset < source.size() && source[source_offset] != '\n')
+            {
+                source_offset++;
+            }
+            if (source_offset < source.size())
+            {
+                source_offset++;
+            }
+        }
+
+        const int source_len = source.size() - source_offset;
+        content.resize((int) header_len + source_len + (int) footer_len);
+        memcpy(content.ptrw(), kCommonJSWrapperHeader, header_len);
+        if (source_len > 0)
+        {
+            memcpy(content.ptrw() + header_len, source.ptr() + source_offset, source_len);
+        }
+        memcpy(content.ptrw() + header_len + source_len, kCommonJSWrapperFooter, footer_len);
+    }
+    else
+    {
+        content = source;
+    }
+
+    Ref<DirAccess> dir = DirAccess::create(DirAccess::ACCESS_FILESYSTEM);
+    if (dir.is_null() || dir->make_dir_recursive(absolute_export_path.get_base_dir()) != OK)
+    {
+        JSB_EXPORTER_LOG(Error, "can't create external CommonJS export directory for %s", absolute_export_path);
+        return false;
+    }
+
+    Ref<FileAccess> file = FileAccess::open(absolute_export_path, FileAccess::WRITE, &err);
+    if (file.is_null() || err != OK)
+    {
+        JSB_EXPORTER_LOG(Error, "can't write external CommonJS export file %s", absolute_export_path);
+        return false;
+    }
+    file->store_buffer(content.ptr(), content.size());
+    external_paths_.insert(absolute_export_path);
+    if (is_commonjs_external_file(p_export_path))
+    {
+        write_web_commonjs_manifest_marker(p_export_path);
+    }
+    JSB_EXPORTER_LOG(Verbose, "include external CommonJS: %s => %s", p_source_path, absolute_export_path);
+    return true;
+}
+
+bool GodotJSExportPlugin::export_external_or_raw_file_as(const String& p_source_path, const String& p_export_path, bool p_remap)
+{
+    if (is_web_commonjs_packed_script_path(p_export_path))
+    {
+        const bool exported = export_raw_file_as(p_source_path, p_export_path, false);
+        if (exported)
+        {
+            JSB_EXPORTER_LOG(Verbose, "include Web CommonJS packed static asset: %s", p_export_path);
+        }
+        return exported;
+    }
+
+    if (is_web_commonjs_export_enabled() && is_commonjs_external_file(p_export_path))
+    {
+        const bool is_javascript = is_javascript_like_file(p_export_path);
+        const bool exported = write_external_file_as(p_source_path, p_export_path, is_javascript);
+        if (exported && is_javascript)
+        {
+            exported_paths_.insert(p_export_path);
+        }
+        return exported;
+    }
+    return export_raw_file_as(p_source_path, p_export_path, p_remap);
+}
+
+bool GodotJSExportPlugin::export_external_or_raw_file(const String& p_path, bool p_remap)
+{
+    return export_external_or_raw_file_as(p_path, p_path, p_remap);
+}
+
+void GodotJSExportPlugin::add_remap_file(const String& p_from_path, const String& p_to_path)
+{
+    const String remap_path = p_from_path + ".remap";
+    if (exported_paths_.has(remap_path))
+    {
+        return;
+    }
+
+    const String remap_text = "[remap]\n\npath=\"" + p_to_path.c_escape() + "\"\n";
+    Vector<uint8_t> remap_content = remap_text.to_utf8_buffer();
+    exported_paths_.insert(remap_path);
+    add_file(remap_path, remap_content, false);
+    JSB_EXPORTER_LOG(Verbose, "include remap: %s => %s", p_from_path, p_to_path);
 }
 
 bool GodotJSExportPlugin::export_directory_as(const String& p_source_dir, const String& p_export_dir)
@@ -312,7 +592,7 @@ bool GodotJSExportPlugin::export_directory_as(const String& p_source_dir, const 
 
 bool GodotJSExportPlugin::export_module_files(const jsb::JavaScriptModule& p_module, bool p_remap)
 {
-    if (!export_raw_file(p_module.source_info.source_filepath, p_remap))
+    if (!export_external_or_raw_file(p_module.source_info.source_filepath, p_remap))
     {
         JSB_EXPORTER_LOG(Error, "can't read JS source from %s, please ensure that 'tsc' has being executed properly.", p_module.source_info.source_filepath);
         return false;
@@ -321,16 +601,27 @@ bool GodotJSExportPlugin::export_module_files(const jsb::JavaScriptModule& p_mod
     if (jsb::internal::Settings::is_packaging_with_source_map())
     {
         const String source_map_path = p_module.source_info.source_filepath + ".map";
-        if (!export_raw_file(source_map_path, false))
+        const bool source_map_exported = FileAccess::exists(source_map_path) &&
+            (is_web_commonjs_export_enabled()
+                ? write_external_file_as(source_map_path, source_map_path, false)
+                : export_raw_file(source_map_path, false));
+        if (!source_map_exported)
         {
             JSB_EXPORTER_LOG(Verbose, "can't read the sourcemap from %s, please ensure that 'tsc' has being executed properly.", source_map_path);
         }
     }
 
-    if (!p_module.source_info.package_filepath.is_empty() && !export_raw_file(p_module.source_info.package_filepath, false))
+    if (!p_module.source_info.package_filepath.is_empty())
     {
-        JSB_EXPORTER_LOG(Error, "can't read the package.json from %s", p_module.source_info.package_filepath);
-        return false;
+        if (is_web_commonjs_export_enabled())
+        {
+            write_external_file_as(p_module.source_info.package_filepath, p_module.source_info.package_filepath, false);
+        }
+        if (!export_raw_file(p_module.source_info.package_filepath, false))
+        {
+            JSB_EXPORTER_LOG(Error, "can't read the package.json from %s", p_module.source_info.package_filepath);
+            return false;
+        }
     }
     return true;
 }
@@ -479,20 +770,43 @@ bool GodotJSExportPlugin::generate_and_export_v8_packaged_cache(const String& p_
     return exported;
 }
 #endif
+
 void GodotJSExportPlugin::_export_file(const String& p_path, const String& p_type, const HashSet<String>& p_features)
 {
     //TODO when exporting for web.impl, need to reorganize all scripts into a monolithic script (like webpack)? and preload it before everything get run.
 
+    if (is_web_commonjs_packed_script_path(p_path))
+    {
+        export_raw_file(p_path, false);
+        skip();
+        JSB_EXPORTER_LOG(Verbose, "include Web CommonJS packed static asset: %s", p_path);
+        return;
+    }
+
     if (p_path.ends_with("." JSB_TYPESCRIPT_EXT))
     {
         const String compiled_script_path = jsb::internal::PathUtil::convert_typescript_path(p_path);
-        export_compiled_script(compiled_script_path, true);
+        export_compiled_script(compiled_script_path, !is_web_commonjs_export_enabled());
+
+        if (is_web_commonjs_export_enabled())
+        {
+            add_remap_file(p_path, compiled_script_path);
+            skip();
+        }
 
         // always skip the typescript source from packing
         JSB_EXPORTER_LOG(Verbose, "export source: %s => %s", p_path, compiled_script_path);
     }
     else
     {
+        if (is_web_commonjs_export_enabled() && is_javascript_like_file(p_path))
+        {
+            export_compiled_script(p_path, false);
+            skip();
+            JSB_EXPORTER_LOG(Verbose, "externalized source: %s", p_path);
+            return;
+        }
+
         if (ignored_paths_.has(p_path))
         {
             skip();

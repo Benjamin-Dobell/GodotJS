@@ -6,6 +6,8 @@
 
 namespace jsb
 {
+    class Environment;
+
     class IModuleResolver
     {
     public:
@@ -13,7 +15,7 @@ namespace jsb
 
         // check if the given module_id is valid to resolve
         // `r_asset_path` will be set if there is an available source file in `FileAccess` which matches the given `module_id`
-        virtual bool get_source_info(const String& p_module_id, ModuleSourceInfo& r_source_info) = 0;
+        virtual bool get_source_info(Environment* p_env, const String& p_module_id, ModuleSourceInfo& r_source_info) = 0;
 
         // load source into the module
         // `exports' will be set into `p_module.exports` if loaded successfully
@@ -33,7 +35,7 @@ namespace jsb
     public:
         virtual ~DefaultModuleResolver() override = default;
 
-        virtual bool get_source_info(const String& p_module_id, ModuleSourceInfo& r_source_info) override;
+        virtual bool get_source_info(Environment* p_env, const String& p_module_id, ModuleSourceInfo& r_source_info) override;
 
         /** load module from asset path (use FileAccessSourceReader) */
         virtual bool load(Environment* p_env, const String& p_asset_path, JavaScriptModule& p_module) override;
@@ -44,16 +46,16 @@ namespace jsb
         static bool load(Environment* p_env, const String& p_asset_path, const internal::ISourceReader& p_reader, JavaScriptModule& p_module);
 
     protected:
-        bool check_absolute_file_path(const String& p_module_id, ModuleSourceInfo& o_source_info);
-        bool check_package_file_path(const String& p_package_path, const String& p_module_id, ModuleSourceInfo& o_source_info);
-        bool check_search_path(const String& p_search_path, const String& p_module_id, ModuleSourceInfo& o_source_info);
+        bool check_absolute_file_path(Environment* p_env, const String& p_module_id, ModuleSourceInfo& o_source_info);
+        bool check_package_file_path(Environment* p_env, const String& p_package_path, const String& p_module_id, ModuleSourceInfo& o_source_info);
+        bool check_search_path(Environment* p_env, const String& p_search_path, const String& p_module_id, ModuleSourceInfo& o_source_info);
 
         static String resolve_package_export(const Dictionary& p_exports, const String& p_condition, const String& p_module_id);
 
         // read the source buffer (transformed into commonjs)
         static size_t read_all_bytes_with_shebang(const internal::ISourceReader& p_reader, Vector<uint8_t>& o_bytes);
 
-        static bool check_implicit_source_path(const String& p_module_id, String& o_path);
+        static bool check_implicit_source_path(Environment* p_env, const String& p_module_id, String& o_path);
 
     private:
 

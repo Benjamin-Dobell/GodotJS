@@ -51,6 +51,12 @@
 
 namespace jsb
 {
+    namespace
+    {
+        static constexpr char kGodotJSHostRequire[] = "__godotjs_host_require";
+        static constexpr char kGodotJSInternalRequire[] = "__godotjs_internal_require";
+    }
+
 #if JSB_V8_CPPGC
     // for cppgc wrapper descriptor
     enum
@@ -317,6 +323,32 @@ namespace jsb
                 {
                     const v8::Local<v8::Object> cache_obj = v8::Object::New(isolate_);
                     const v8::Local<v8::Function> require_func = JSB_NEW_FUNCTION(context, Builtins::_require, {});
+#if JSB_WITH_WEB
+                    v8::Local<v8::Value> host_require;
+                    const v8::Local<v8::String> host_require_key = impl::Helper::new_string_ascii(isolate_, kGodotJSHostRequire);
+                    const v8::Local<v8::String> internal_require_key = impl::Helper::new_string_ascii(isolate_, kGodotJSInternalRequire);
+                    const bool has_preserved_host_require =
+                        global->Get(context, host_require_key).ToLocal(&host_require) && host_require->IsFunction();
+                    v8::Local<v8::Value> current_require;
+                    if (!has_preserved_host_require &&
+                        global->Get(context, impl::Helper::new_string_ascii(isolate_, "require")).ToLocal(&current_require) &&
+                        current_require->IsFunction())
+                    {
+                        bool current_is_internal = false;
+                        if (current_require->IsObject())
+                        {
+                            v8::Local<v8::Value> marker;
+                            current_is_internal =
+                                current_require.As<v8::Object>()->Get(context, internal_require_key).ToLocal(&marker) &&
+                                marker->BooleanValue(isolate_);
+                        }
+                        if (!current_is_internal)
+                        {
+                            global->Set(context, host_require_key, current_require).Check();
+                        }
+                    }
+                    require_func->Set(context, internal_require_key, v8::Boolean::New(isolate_, true)).Check();
+#endif
                     require_func->Set(context, jsb_name(this, cache), cache_obj).Check();
                     require_func->Set(context, impl::Helper::new_string_ascii(isolate_, "moduleId"), v8::String::Empty(isolate_)).Check();
                     global->Set(context, impl::Helper::new_string_ascii(isolate_, "require"), require_func).Check();
@@ -1306,6 +1338,7 @@ namespace jsb
         jsb_unused(p_js_owned_non_ref);
         return;
 #else
+#if JSB_WITH_V8
         auto capture_top_stack_frame = [this]() -> String
         {
             if (!isolate_)
@@ -1313,7 +1346,6 @@ namespace jsb
                 return "";
             }
             v8::HandleScope handle_scope(isolate_);
-#if !JSB_WITH_WEB
             v8::Local<v8::StackTrace> stack = v8::StackTrace::CurrentStackTrace(isolate_, 6, v8::StackTrace::kDetailed);
             const int frame_count = stack->GetFrameCount();
             for (int i = 0; i < frame_count; i++)
@@ -1331,9 +1363,14 @@ namespace jsb
                 const int column = frame->GetColumn();
                 return vformat("%s:%d:%d (%s)", script_name, line, column, function_name);
             }
-#endif
             return "";
         };
+#else
+        auto capture_top_stack_frame = []() -> String
+        {
+            return "";
+        };
+#endif
 
         static int s_capture_origin_stack_enabled = -1;
         if (s_capture_origin_stack_enabled == -1)

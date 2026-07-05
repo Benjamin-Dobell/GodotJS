@@ -608,7 +608,7 @@ namespace jsb
         {
             for (IModuleResolver* resolver : module_resolvers_)
             {
-                if (resolver->get_source_info(p_module_id, r_source_info))
+                if (resolver->get_source_info(const_cast<Environment*>(this), p_module_id, r_source_info))
                 {
                     return resolver;
                 }

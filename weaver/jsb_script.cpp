@@ -2,6 +2,7 @@
 #include "jsb_script_language.h"
 #include "jsb_script_instance.h"
 #include "../internal/jsb_path_util.h"
+#include "../internal/jsb_web_commonjs_manifest.h"
 
 GodotJSScript::GodotJSScript(): script_list_(this)
 {
@@ -527,6 +528,14 @@ Error GodotJSScript::load_source_code(const String &p_path)
 #endif
     if (err != OK)
     {
+#if JSB_WITH_WEB && !defined(TOOLS_ENABLED)
+        if (jsb::internal::PathUtil::is_recognized_javascript_extension(path) &&
+            jsb::internal::WebCommonJSManifest::has_path(path))
+        {
+            set_source_code(String());
+            return OK;
+        }
+#endif
         JSB_LOG(Warning, "can not read source from %s", p_path);
     }
     else

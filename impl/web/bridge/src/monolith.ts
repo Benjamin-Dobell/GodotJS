@@ -70,8 +70,15 @@ type JSWorkerOnMessage = (this: JSWorkerLike, data: unknown) => void;
 type JSWorkerLike = { onmessage: JSWorkerOnMessage };
 type GodotWorkerModule = { JSWorkerParent: JSWorkerLike };
 type GodotWorkerGlobal = { require?: (module_name: "godot.worker") => GodotWorkerModule };
+type GodotJSHostRequire = (module_name: string) => unknown;
+type GodotJSEmscriptenModule = {
+    __godotjs_host_require?: GodotJSHostRequire;
+};
 
-let JSWorkerParent: null | undefined | JSWorkerLike = ENVIRONMENT_IS_PTHREAD ? undefined : null;
+const jsbb_is_pthread = typeof ENVIRONMENT_IS_PTHREAD !== "undefined" && ENVIRONMENT_IS_PTHREAD;
+const jsbb_pthread_runtime = typeof PThread !== "undefined" ? PThread : undefined;
+
+let JSWorkerParent: null | undefined | JSWorkerLike = jsbb_is_pthread ? undefined : null;
 
 function getJSWorkerParent(): null | JSWorkerLike {
     if (typeof JSWorkerParent !== "undefined") {
@@ -467,23 +474,45 @@ class jsbb_Engine {
 
     SetHostPromiseRejectionTracker(cb: FunctionPointer, data: Pointer) {
         const self = this;
-        globalThis.addEventListener("unhandledrejection", function (event: Event) {
+
+        const handleRejection = function (promise: unknown, reason: unknown) {
             if (!self._stack) {
                 return;
             }
 
-            const ev = event as PromiseRejectionEvent;
-            jsbb_console.warn("unhandled_rejection", ev.promise, ev.reason);
+            jsbb_console.warn("unhandled_rejection", promise, reason);
             const stack = self._stack;
             stack.EnterScope();
             try {
-                _jsbb_.interop.unhandled_rejection(self._opaque, cb, stack.Push(ev.promise), stack.Push(ev.reason));
+                _jsbb_.interop.unhandled_rejection(self._opaque, cb, stack.Push(promise), stack.Push(reason));
             } catch (err) {
                 // rejection handler must do not throw error
                 jsbb_console.error("unexpected error", err);
             }
             stack.ExitScope();
-        })
+        };
+
+        if (typeof globalThis.addEventListener === "function") {
+            globalThis.addEventListener("unhandledrejection", function (event: Event) {
+                const ev = event as PromiseRejectionEvent;
+                handleRejection(ev.promise, ev.reason);
+            });
+            return;
+        }
+
+        const nodeProcess = (globalThis as unknown as {
+            process?: {
+                on?: (event: string, listener: (reason: unknown, promise: Promise<unknown>) => void) => unknown;
+            };
+        }).process;
+        if (typeof nodeProcess?.on === "function") {
+            nodeProcess.on("unhandledRejection", function (reason: unknown, promise: Promise<unknown>) {
+                handleRejection(promise, reason);
+            });
+            return;
+        }
+
+        jsbb_console.warn("unhandled_rejection tracking unavailable: host has no addEventListener or process.on");
     }
 
     static GetStringHash(val: string): number {
@@ -1014,7 +1043,7 @@ class jsbb_Engine {
                 return jsbb_StackPos.Error;
             }
             jsbb_console.trace("compile function source:", source);
-            rval = eval(source);
+            rval = (0, eval)(source);
         } catch (err) {
             if (err instanceof EvalError && typeof document !== "undefined") {
                 jsbb_console.warn("eval not supported (CSP restriction), trying script element instead");
@@ -1066,7 +1095,7 @@ class jsbb_Engine {
                 this._throw(new Error("source is null"));
                 return jsbb_StackPos.Error;
             }
-            rval = eval(source);
+            rval = (0, eval)(source);
         } catch (err) {
             // it's difficult to emulate the behaviour of eval with script element (get the result without 'return').
             // just throw error for easier life.
@@ -1483,7 +1512,7 @@ class _jsbb_ {
             jsbb_console.error("invalid interop");
         }
         if (typeof this.interop !== "undefined") {
-            if (ENVIRONMENT_IS_PTHREAD) {
+            if (jsbb_is_pthread) {
                 this.reset_pthread_runtime_state();
             } else {
                 jsbb_console.error("Already initialized, do not call it twice");
@@ -1932,7 +1961,7 @@ class _jsbb_ {
 
     static post_message_to_worker(pthread_id: number, data: unknown, transfer_id?: number): boolean {
         try {
-            const worker = PThread?.pthreads[pthread_id];
+            const worker = jsbb_pthread_runtime?.pthreads[pthread_id];
 
             if (!worker) {
                 return false;
@@ -1957,18 +1986,18 @@ class _jsbb_ {
     }
 
     private static install_pthread_worker_listener_hook(): void {
-        if (ENVIRONMENT_IS_PTHREAD || !PThread) {
+        if (jsbb_is_pthread || !jsbb_pthread_runtime) {
             return;
         }
 
-        const original_get_new_worker = PThread.getNewWorker;
+        const original_get_new_worker = jsbb_pthread_runtime.getNewWorker;
 
         if (original_get_new_worker.__jsb_wrapped) {
             return;
         }
 
         const wrapped_get_new_worker: typeof original_get_new_worker = (() => {
-            const worker = original_get_new_worker.call(PThread);
+            const worker = original_get_new_worker.call(jsbb_pthread_runtime);
 
             if (worker) {
 				// Install our own message listener (in addition to what Emscripten puts in place)
@@ -1995,11 +2024,11 @@ class _jsbb_ {
         });
         wrapped_get_new_worker.__jsb_wrapped = true;
 
-        PThread.getNewWorker = wrapped_get_new_worker;
+        jsbb_pthread_runtime.getNewWorker = wrapped_get_new_worker;
     }
 
     private static dispatch_direct_worker_message(data: unknown, sender_pthread_id?: number): void {
-        if (ENVIRONMENT_IS_PTHREAD) {
+        if (jsbb_is_pthread) {
             const worker_parent = getJSWorkerParent();
 
             if (!worker_parent) {
@@ -2070,12 +2099,12 @@ class _jsbb_ {
                 message
             );
 
-            const is_ready_sentinel_transfer_id = ENVIRONMENT_IS_PTHREAD && transfer_id === 0;
+            const is_ready_sentinel_transfer_id = jsbb_is_pthread && transfer_id === 0;
             const outbound_transfer_id = (transfer_context.native_transfers_used || is_ready_sentinel_transfer_id)
                 ? transfer_id
                 : undefined;
 
-            if (ENVIRONMENT_IS_PTHREAD) {
+            if (jsbb_is_pthread) {
                 const payload: WorkerMessage = {
                     "__jsbMessage": true,
                     "data": rewritten,
@@ -2195,12 +2224,13 @@ declare const HEAPU8: Uint8Array;
 declare const HEAP32: Int32Array;
 declare const global: any;
 declare const require: undefined | ((module_name: string) => any);
+declare const Module: undefined | GodotJSEmscriptenModule;
 declare const _malloc: EmscriptenModule['_malloc'];
 declare const _free: EmscriptenModule['_free'];
 declare const PThread: undefined | EmscriptenPThread;
 declare const ENVIRONMENT_IS_PTHREAD: undefined | boolean;
 
-if (ENVIRONMENT_IS_PTHREAD && typeof globalThis.addEventListener === "function") {
+if (jsbb_is_pthread && typeof globalThis.addEventListener === "function") {
     globalThis.addEventListener('message', (e: MessageEvent) => {
         if (!jsbb_is_worker_message(e.data)) {
             return;
@@ -2220,5 +2250,9 @@ if (ENVIRONMENT_IS_PTHREAD && typeof globalThis.addEventListener === "function")
     }, true);
 }
 
-const jsbb_browser = (typeof globalThis === "object" && globalThis) || (typeof window === "object" && window) || (typeof global === "object" && global);
+const jsbb_browser = globalThis;
+const jsbb_host_require = typeof Module === "object" ? Module["__godotjs_host_require"] : undefined;
+if (typeof jsbb_host_require === "function") {
+    (<any>jsbb_browser)["__godotjs_host_require"] = jsbb_host_require;
+}
 (<any>jsbb_browser)["_jsbb_"] = _jsbb_;
