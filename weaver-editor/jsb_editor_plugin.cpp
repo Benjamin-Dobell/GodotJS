@@ -2,6 +2,7 @@
 #include "jsb_docked_panel.h"
 #include "jsb_export_plugin.h"
 
+#include "core/io/config_file.h"
 #include "core/string/char_utils.h"
 #include "core/templates/hash_map.h"
 
@@ -879,12 +880,35 @@ static bool _should_skip_resource_codegen(EditorFileSystemDirectory* p_dir, int 
     return output_mtime >= input_mtime;
 }
 
+static bool _has_raw_import_mode(const String& p_path)
+{
+    if (!FileAccess::exists(p_path + ".import"))
+    {
+        return false;
+    }
+
+    Ref<ConfigFile> config;
+    config.instantiate();
+    if (config->load(p_path + ".import") != OK || !config->has_section_key("remap", "importer"))
+    {
+        return false;
+    }
+
+    const String importer = config->get_value("remap", "importer");
+    return importer == "keep" || importer == "skip";
+}
+
 void GodotJSEditorPlugin::get_all_resources(EditorFileSystemDirectory* p_dir, Vector<String>& r_list)
 {
     for (int i = 0; i < p_dir->get_file_count(); i++)
     {
         String path = p_dir->get_file_path(i);
         if (path.begins_with("res://install/") || path.begins_with("res://node_modules/"))
+        {
+            continue;
+        }
+
+        if (_has_raw_import_mode(path))
         {
             continue;
         }
