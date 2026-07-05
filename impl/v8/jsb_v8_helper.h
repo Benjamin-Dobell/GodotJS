@@ -13,6 +13,19 @@ namespace jsb::impl
     public:
         Helper() = delete;
 
+        struct CompileCacheOptions
+        {
+            const uint8_t* data = nullptr;
+            int length = 0;
+            bool produce_cache = false;
+        };
+
+        struct CompileCacheResult
+        {
+            Vector<uint8_t> produced_cache;
+            bool cache_rejected = false;
+        };
+
         static PackedByteArray to_packed_byte_array(v8::Isolate* isolate, const v8::Local<v8::ArrayBuffer>& array_buffer)
         {
             const size_t size = array_buffer->ByteLength();
@@ -146,44 +159,53 @@ namespace jsb::impl
          * \param p_source_origin SourceOrigin (compile the code snippet without ScriptOrigin if `p_filename` is empty)
          * \return js rval
          */
-        static v8::MaybeLocal<v8::Value> compile_function(const v8::Local<v8::Context>& context, const char* p_source, int p_source_len, const String& p_source_origin)
+        static v8::MaybeLocal<v8::Value> compile_function_with_cache(const v8::Local<v8::Context>& context, const char* p_source, int p_source_len, const String& p_source_origin, const CompileCacheOptions& p_cache_options, CompileCacheResult& r_cache_result)
         {
             v8::Isolate* isolate = context->GetIsolate();
-            v8::MaybeLocal<v8::Script> script;
             const v8::Local<v8::String> source = v8::String::NewFromUtf8(isolate, p_source, v8::NewStringType::kNormal, p_source_len).ToLocalChecked();
+            v8::ScriptCompiler::CachedData* cached_data = nullptr;
+            if (p_cache_options.data && p_cache_options.length > 0)
+            {
+                cached_data = new v8::ScriptCompiler::CachedData(
+                    p_cache_options.data,
+                    p_cache_options.length,
+                    v8::ScriptCompiler::CachedData::BufferNotOwned);
+                if (cached_data->CompatibilityCheck(isolate) != v8::ScriptCompiler::CachedData::kSuccess)
+                {
+                    r_cache_result.cache_rejected = true;
+                    delete cached_data;
+                    cached_data = nullptr;
+                }
+            }
+
+            const v8::ScriptCompiler::CompileOptions compile_options = cached_data
+                ? v8::ScriptCompiler::kConsumeCodeCache
+                : v8::ScriptCompiler::kNoCompileOptions;
 
             if (p_source_origin.is_empty())
             {
-                script = v8::Script::Compile(context, source);
+                v8::ScriptCompiler::Source script_source(source, cached_data);
+                const v8::MaybeLocal<v8::UnboundScript> unbound_script = v8::ScriptCompiler::CompileUnboundScript(isolate, &script_source, compile_options);
+                if (cached_data)
+                {
+                    const v8::ScriptCompiler::CachedData* consumed = script_source.GetCachedData();
+                    r_cache_result.cache_rejected = consumed && consumed->rejected;
+                }
+                return run_compiled_script(context, unbound_script, p_cache_options, r_cache_result);
             }
             else
             {
-#if JSB_WITH_URI_SCRIPT_ORIGIN
-                const int protocol_index = p_source_origin.find("://");
-                const String source_origin_path = protocol_index > -1 ? p_source_origin.substr(protocol_index + 1) : p_source_origin;
-                const String prefixed = "file://" + source_origin_path;
-                const String filename = prefixed;
-#else
-                const int protocol_index = p_source_origin.find("://");
-                const String source_origin_path = protocol_index > -1 ? p_source_origin.substr(protocol_index + 1) : p_source_origin;
-#ifdef WINDOWS_ENABLED
-                const String filename = p_source_origin.find("res://") == 0
-                    ? p_source_origin.substr(6).replace("/", "\\")
-                    : p_source_origin.replace("/", "\\");
-#else
-                const String filename = p_source_origin.find("res://") == 0 ? p_source_origin.substr(6) : p_source_origin;
-#endif
-#endif
+                const String filename = get_script_origin_filename(p_source_origin);
+                const String source_map_url = get_script_origin_source_map_url(p_source_origin);
 
-                String source_map_base_url = jsb::internal::Settings::get_debugger_source_map_base_url();
-
-                v8::Local<v8::Value> filename_value = v8::String::NewFromUtf8(isolate, filename.utf8().ptr(), v8::NewStringType::kNormal, filename.length()).ToLocalChecked();
+                const CharString filename_utf8 = filename.utf8();
+                v8::Local<v8::Value> filename_value = v8::String::NewFromUtf8(isolate, filename_utf8.get_data(), v8::NewStringType::kNormal, filename_utf8.length()).ToLocalChecked();
                 v8::Local<v8::Value> source_map_url_value;
 
-                if (source_map_base_url.length() > 0)
+                if (!source_map_url.is_empty())
                 {
-                    String source_map_url = source_map_base_url + (source_map_base_url.ends_with("/") ? filename : '/' + filename) + ".map";
-                    source_map_url_value = v8::String::NewFromUtf8(isolate, source_map_url.utf8().ptr(), v8::NewStringType::kNormal, source_map_url.length()).ToLocalChecked();
+                    const CharString source_map_url_utf8 = source_map_url.utf8();
+                    source_map_url_value = v8::String::NewFromUtf8(isolate, source_map_url_utf8.get_data(), v8::NewStringType::kNormal, source_map_url_utf8.length()).ToLocalChecked();
                 }
 
 #if V8_VERSION_NEWER_THAN(12, 1, 139)
@@ -192,22 +214,60 @@ namespace jsb::impl
                 v8::ScriptOrigin origin(isolate, filename_value, 0, 0, false, -1, source_map_url_value);
 #endif
 
-                script = v8::Script::Compile(context, source, &origin);
+                v8::ScriptCompiler::Source script_source(source, origin, cached_data);
+                const v8::MaybeLocal<v8::UnboundScript> unbound_script = v8::ScriptCompiler::CompileUnboundScript(isolate, &script_source, compile_options);
+                if (cached_data)
+                {
+                    const v8::ScriptCompiler::CachedData* consumed = script_source.GetCachedData();
+                    r_cache_result.cache_rejected = consumed && consumed->rejected;
+                }
+                return run_compiled_script(context, unbound_script, p_cache_options, r_cache_result);
             }
+        }
 
-            if (script.IsEmpty())
+        static v8::MaybeLocal<v8::Value> compile_function(const v8::Local<v8::Context>& context, const char* p_source, int p_source_len, const String& p_source_origin)
+        {
+            CompileCacheOptions cache_options;
+            CompileCacheResult cache_result;
+            return compile_function_with_cache(context, p_source, p_source_len, p_source_origin, cache_options, cache_result);
+        }
+
+        static String get_script_origin_filename(const String& p_source_origin)
+        {
+#if JSB_WITH_URI_SCRIPT_ORIGIN
+            const int protocol_index = p_source_origin.find("://");
+            const String source_origin_path = protocol_index > -1 ? p_source_origin.substr(protocol_index + 1) : p_source_origin;
+            return "file://" + source_origin_path;
+#else
+#ifdef WINDOWS_ENABLED
+            return p_source_origin.find("res://") == 0
+                ? p_source_origin.substr(6).replace("/", "\\")
+                : p_source_origin.replace("/", "\\");
+#else
+            return p_source_origin.find("res://") == 0 ? p_source_origin.substr(6) : p_source_origin;
+#endif
+#endif
+        }
+
+        static String get_script_origin_source_map_url(const String& p_source_origin)
+        {
+            const String source_map_base_url = jsb::internal::Settings::get_debugger_source_map_base_url();
+            if (source_map_base_url.is_empty())
             {
-                return {};
+                return String();
             }
 
-            const v8::MaybeLocal<v8::Value> maybe_value = script.ToLocalChecked()->Run(context);
-            if (maybe_value.IsEmpty())
+            const String filename = get_script_origin_filename(p_source_origin);
+            return source_map_base_url + (source_map_base_url.ends_with("/") ? filename : '/' + filename) + ".map";
+        }
+
+        static String get_script_origin_identity(const String& p_source_origin)
+        {
+            if (p_source_origin.is_empty())
             {
-                return {};
+                return String();
             }
-
-            // JSB_LOG(VeryVerbose, "script compiled %s", p_filename);
-            return maybe_value;
+            return get_script_origin_filename(p_source_origin) + "\n" + get_script_origin_source_map_url(p_source_origin);
         }
 
         static v8::MaybeLocal<v8::Value> eval(const v8::Local<v8::Context>& context, const char* p_source, int p_source_len, const String& p_filename)
@@ -244,6 +304,37 @@ namespace jsb::impl
         }
 
         jsb_force_inline static void set_as_interruptible(v8::Isolate* isolate) {}
+
+    private:
+        static v8::MaybeLocal<v8::Value> run_compiled_script(const v8::Local<v8::Context>& context, const v8::MaybeLocal<v8::UnboundScript>& p_unbound_script, const CompileCacheOptions& p_cache_options, CompileCacheResult& r_cache_result)
+        {
+            v8::Local<v8::UnboundScript> unbound_script;
+            if (!p_unbound_script.ToLocal(&unbound_script))
+            {
+                return {};
+            }
+
+            const bool should_produce_cache = p_cache_options.produce_cache &&
+                (!p_cache_options.data || p_cache_options.length == 0 || r_cache_result.cache_rejected);
+            if (should_produce_cache)
+            {
+                std::unique_ptr<v8::ScriptCompiler::CachedData> produced_cache(v8::ScriptCompiler::CreateCodeCache(unbound_script));
+                if (produced_cache && produced_cache->data && produced_cache->length > 0)
+                {
+                    r_cache_result.produced_cache.resize(produced_cache->length);
+                    memcpy(r_cache_result.produced_cache.ptrw(), produced_cache->data, produced_cache->length);
+                }
+            }
+
+            const v8::Local<v8::Script> script = unbound_script->BindToCurrentContext();
+            const v8::MaybeLocal<v8::Value> maybe_value = script->Run(context);
+            if (maybe_value.IsEmpty())
+            {
+                return {};
+            }
+
+            return maybe_value;
+        }
     };
 }
 

@@ -32,9 +32,14 @@ private:
 
     bool export_compiled_script(const String& p_path, bool p_remap);
     bool export_module_files(const jsb::JavaScriptModule& p_module, bool p_remap);
+    bool export_raw_file_as(const String& p_source_path, const String& p_export_path, bool p_remap);
     bool export_raw_file(const String& p_path, bool p_remap);
+    bool export_directory_as(const String& p_source_dir, const String& p_export_dir);
     void export_raw_files(const PackedStringArray& p_paths, bool p_permit_typescript);
     void get_script_resources(const String &p_dir, Vector<String> &r_list, bool p_is_node_module = false);
+#if JSB_WITH_V8
+    bool generate_and_export_v8_packaged_cache(const String& p_entry_scene);
+#endif
 
     HashSet<String> exported_paths_;
     std::shared_ptr<jsb::Environment> env_;

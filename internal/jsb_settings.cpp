@@ -32,6 +32,14 @@ namespace jsb::internal
     static constexpr char kRtAdditionalSearchPaths[] = JSB_MODULE_NAME_STRING "/runtime/core/additional_search_paths";
     static constexpr char kRtEntryScriptPath[] = JSB_MODULE_NAME_STRING "/runtime/core/entry_script_path";
     static constexpr char kRtCamelCaseBindingsEnabled[] = JSB_MODULE_NAME_STRING "/runtime/core/camel_case_bindings_enabled";
+#if JSB_WITH_V8
+    static constexpr char kRtV8CodeCacheUnsafeUserEnabled[] = JSB_MODULE_NAME_STRING "/runtime/v8_code_cache/unsafe_user_cache_enabled";
+    static constexpr char kRtV8CodeCacheUnsafeUserPath[] = JSB_MODULE_NAME_STRING "/runtime/v8_code_cache/unsafe_user_cache_path";
+    static constexpr char kRtV8CodeCachePackagedPath[] = JSB_MODULE_NAME_STRING "/runtime/v8_code_cache/packaged_cache_path";
+    static constexpr char kRtV8CodeCacheGeneratePackaged[] = JSB_MODULE_NAME_STRING "/runtime/v8_code_cache/generate_packaged_cache";
+    static constexpr char kRtV8CodeCacheLoggingEnabled[] = JSB_MODULE_NAME_STRING "/runtime/v8_code_cache/logging_enabled";
+    static constexpr char kExV8CodeCacheEntryScene[] = JSB_MODULE_NAME_STRING "/export/v8_code_cache_entry_scene";
+#endif
 
     // editor specific settings, but we need it configured as project-wise instead of global-wise
     static constexpr char kRtPackagingWithSourceMap[] = JSB_MODULE_NAME_STRING "/editor/packaging/source_map_included";
@@ -95,6 +103,13 @@ namespace jsb::internal
             _GLOBAL_DEF(kRtSourceMapEnabled, true, JSB_SET_RESTART(false), JSB_SET_IGNORE_DOCS(false), JSB_SET_BASIC(true),  JSB_SET_INTERNAL(false));
             _GLOBAL_DEF(kRtAdditionalSearchPaths, PackedStringArray(), JSB_SET_RESTART(false),  JSB_SET_IGNORE_DOCS(false), JSB_SET_BASIC(true),  JSB_SET_INTERNAL(false));
             _GLOBAL_DEF(kRtCamelCaseBindingsEnabled, false, JSB_SET_RESTART(true), JSB_SET_IGNORE_DOCS(false), JSB_SET_BASIC(true),  JSB_SET_INTERNAL(false));
+#if JSB_WITH_V8
+            _GLOBAL_DEF(kRtV8CodeCacheUnsafeUserEnabled, false, JSB_SET_RESTART(false), JSB_SET_IGNORE_DOCS(false), JSB_SET_BASIC(true), JSB_SET_INTERNAL(false));
+            _GLOBAL_DEF(kRtV8CodeCacheUnsafeUserPath, "user://GodotJSCodeCache/v8", JSB_SET_RESTART(false), JSB_SET_IGNORE_DOCS(false), JSB_SET_BASIC(false), JSB_SET_INTERNAL(false));
+            _GLOBAL_DEF(kRtV8CodeCachePackagedPath, "res://.godotjs/v8_code_cache", JSB_SET_RESTART(false), JSB_SET_IGNORE_DOCS(false), JSB_SET_BASIC(false), JSB_SET_INTERNAL(false));
+            _GLOBAL_DEF(kRtV8CodeCacheGeneratePackaged, false, JSB_SET_RESTART(false), JSB_SET_IGNORE_DOCS(true), JSB_SET_BASIC(false), JSB_SET_INTERNAL(true));
+            _GLOBAL_DEF(kRtV8CodeCacheLoggingEnabled, false, JSB_SET_RESTART(false), JSB_SET_IGNORE_DOCS(false), JSB_SET_BASIC(false), JSB_SET_INTERNAL(false));
+#endif
 
             {
                 PropertyInfo EntryScriptPath;
@@ -104,6 +119,17 @@ namespace jsb::internal
                 EntryScriptPath.hint_string = filter;
                 _GLOBAL_DEF(EntryScriptPath, String(), JSB_SET_RESTART(false), JSB_SET_IGNORE_DOCS(false), JSB_SET_BASIC(true),  JSB_SET_INTERNAL(false));
             }
+
+#if JSB_WITH_V8
+            {
+                PropertyInfo EntryScenePath;
+                EntryScenePath.type = Variant::STRING;
+                EntryScenePath.name = kExV8CodeCacheEntryScene;
+                EntryScenePath.hint = PROPERTY_HINT_FILE;
+                EntryScenePath.hint_string = "*.tscn";
+                _GLOBAL_DEF(EntryScenePath, String(), JSB_SET_RESTART(false), JSB_SET_IGNORE_DOCS(false), JSB_SET_BASIC(true), JSB_SET_INTERNAL(false));
+            }
+#endif
 
             _GLOBAL_DEF(kRtPackagingWithSourceMap, true, false);
 
@@ -288,6 +314,44 @@ namespace jsb::internal
         }
         return cached_enabled;
     }
+
+#if JSB_WITH_V8
+    bool Settings::get_v8_code_cache_unsafe_user_enabled()
+    {
+        init_settings();
+        return GLOBAL_GET(kRtV8CodeCacheUnsafeUserEnabled);
+    }
+
+    String Settings::get_v8_code_cache_unsafe_user_path()
+    {
+        init_settings();
+        return GLOBAL_GET(kRtV8CodeCacheUnsafeUserPath);
+    }
+
+    String Settings::get_v8_code_cache_packaged_path()
+    {
+        init_settings();
+        return GLOBAL_GET(kRtV8CodeCachePackagedPath);
+    }
+
+    bool Settings::is_v8_code_cache_packaged_generation_enabled()
+    {
+        init_settings();
+        return GLOBAL_GET(kRtV8CodeCacheGeneratePackaged);
+    }
+
+    bool Settings::is_v8_code_cache_logging_enabled()
+    {
+        init_settings();
+        return GLOBAL_GET(kRtV8CodeCacheLoggingEnabled);
+    }
+
+    String Settings::get_v8_code_cache_entry_scene()
+    {
+        init_settings();
+        return GLOBAL_GET(kExV8CodeCacheEntryScene);
+    }
+#endif
 
     String Settings::get_indentation()
     {

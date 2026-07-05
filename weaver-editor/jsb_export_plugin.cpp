@@ -1,8 +1,134 @@
 ﻿#include "jsb_export_plugin.h"
 
 #include "../weaver/jsb_script.h"
+#include "core/io/config_file.h"
 
 #define JSB_EXPORTER_LOG(Severity, Format, ...) JSB_LOG_IMPL(JSExporter, Severity, Format, ##__VA_ARGS__)
+
+namespace
+{
+#if JSB_WITH_V8
+    static constexpr char kGeneratedV8OverridePath[] = "res://.godotjs_v8_export_override.cfg";
+
+    void set_project_setting(Ref<ConfigFile>& p_config, const String& p_setting_path, const Variant& p_value)
+    {
+        const int slash_index = p_setting_path.find_char('/');
+        ERR_FAIL_COND(slash_index < 0);
+        p_config->set_value(p_setting_path.substr(0, slash_index), p_setting_path.substr(slash_index + 1), p_value);
+    }
+
+    String get_top_level_res_component(const String& p_res_path)
+    {
+        if (!p_res_path.begins_with("res://"))
+        {
+            return String();
+        }
+
+        const String relative_path = p_res_path.substr(6);
+        const int slash_index = relative_path.find_char('/');
+        return slash_index >= 0 ? relative_path.substr(0, slash_index) : relative_path;
+    }
+
+    String get_res_relative_path(const String& p_res_path)
+    {
+        return p_res_path.begins_with("res://") ? p_res_path.substr(6) : String();
+    }
+
+    bool remove_path_recursive_absolute(const String& p_path)
+    {
+        if (p_path.is_empty())
+        {
+            return false;
+        }
+
+        if (DirAccess::dir_exists_absolute(p_path))
+        {
+            Ref<DirAccess> dir = DirAccess::open(p_path);
+            if (dir.is_null() || dir->erase_contents_recursive() != OK)
+            {
+                return false;
+            }
+            return DirAccess::remove_absolute(p_path) == OK;
+        }
+
+        if (FileAccess::exists(p_path))
+        {
+            return DirAccess::remove_absolute(p_path) == OK;
+        }
+
+        return true;
+    }
+
+    bool mirror_project_root(const String& p_source_root, const String& p_mirror_root, const String& p_packaged_cache_root)
+    {
+        Ref<DirAccess> source_dir = DirAccess::open(p_source_root);
+        Ref<DirAccess> mirror_dir = DirAccess::open(p_mirror_root);
+        ERR_FAIL_COND_V(source_dir.is_null() || mirror_dir.is_null(), false);
+
+        const String packaged_cache_relative_path = get_res_relative_path(p_packaged_cache_root);
+        const String packaged_cache_top_level = get_top_level_res_component(p_packaged_cache_root);
+        const String generated_override_filename = String(kGeneratedV8OverridePath).substr(6);
+        source_dir->set_include_hidden(true);
+        source_dir->list_dir_begin();
+        String entry = source_dir->get_next();
+        while (!entry.is_empty())
+        {
+            if (entry != "." && entry != ".." && entry != "override.cfg" && entry != generated_override_filename)
+            {
+                const String source_path = p_source_root.path_join(entry);
+                const String mirror_path = p_mirror_root.path_join(entry);
+                const bool is_packaged_cache_top_level = !packaged_cache_top_level.is_empty() && entry == packaged_cache_top_level;
+                Error err = is_packaged_cache_top_level ? ERR_CANT_CREATE : mirror_dir->create_link(source_path, mirror_path);
+                if (err != OK)
+                {
+                    err = source_dir->current_is_dir()
+                        ? mirror_dir->copy_dir(source_path, mirror_path, -1, true)
+                        : mirror_dir->copy(source_path, mirror_path);
+                }
+                if (err != OK)
+                {
+                    source_dir->list_dir_end();
+                    return false;
+                }
+            }
+            entry = source_dir->get_next();
+        }
+        source_dir->list_dir_end();
+        return packaged_cache_relative_path.is_empty() ||
+            remove_path_recursive_absolute(p_mirror_root.path_join(packaged_cache_relative_path));
+    }
+
+    bool write_v8_export_override_files(const String& p_source_root, const String& p_mirror_root, const String& p_packaged_cache_root)
+    {
+        const String mirror_override_path = p_mirror_root.path_join("override.cfg");
+        const String source_override_path = p_source_root.path_join("override.cfg");
+
+        Ref<ConfigFile> override_config;
+        override_config.instantiate();
+        if (FileAccess::exists(source_override_path))
+        {
+            const Error load_err = override_config->load(source_override_path);
+            if (load_err != OK)
+            {
+                return false;
+            }
+        }
+        set_project_setting(override_config, "application/config/project_settings_override", String(kGeneratedV8OverridePath));
+        if (override_config->save(mirror_override_path) != OK)
+        {
+            return false;
+        }
+
+        Ref<ConfigFile> helper_override;
+        helper_override.instantiate();
+        set_project_setting(helper_override, JSB_MODULE_NAME_STRING "/runtime/v8_code_cache/unsafe_user_cache_enabled", false);
+        set_project_setting(helper_override, JSB_MODULE_NAME_STRING "/runtime/v8_code_cache/generate_packaged_cache", true);
+        set_project_setting(helper_override, JSB_MODULE_NAME_STRING "/runtime/v8_code_cache/packaged_cache_path", p_packaged_cache_root);
+        const String helper_override_path = p_mirror_root.path_join(String(kGeneratedV8OverridePath).substr(6));
+        return helper_override->save(helper_override_path) == OK;
+    }
+#endif
+}
 
 HashSet<String> GodotJSExportPlugin::ignored_paths_ {
     String("res://jsconfig.json"),
@@ -103,24 +229,85 @@ void GodotJSExportPlugin::_export_begin(const HashSet<String>& p_features, bool 
         get_script_resources(dir_path, script_paths);
         export_raw_files(script_paths, true);
     }
+
+#if JSB_WITH_V8
+    bool exported_packaged_cache = false;
+    const String entry_scene = jsb::internal::Settings::get_v8_code_cache_entry_scene();
+    JSB_EXPORTER_LOG(Verbose, "V8 packaged code cache export entry scene: %s", entry_scene);
+    if (!entry_scene.is_empty())
+    {
+        exported_packaged_cache = generate_and_export_v8_packaged_cache(entry_scene);
+    }
+
+    if (exported_packaged_cache)
+    {
+        get_export_platform()->add_message(
+            EditorExportPlatform::EXPORT_MESSAGE_WARNING,
+            get_name(),
+            "GodotJS V8 packaged code cache trusts the exported pack. On Windows/Linux, prefer embedding the PCK into the executable or external pack verification. On macOS, prefer a signed app bundle.");
+    }
+#endif
 }
 
-bool GodotJSExportPlugin::export_raw_file(const String& p_path, bool p_remap)
+bool GodotJSExportPlugin::export_raw_file_as(const String& p_source_path, const String& p_export_path, bool p_remap)
 {
-    if (exported_paths_.has(p_path))
+    if (p_export_path.is_empty() || exported_paths_.has(p_export_path))
     {
         return true;
     }
     Error err;
-    const Vector<uint8_t> content = FileAccess::get_file_as_bytes(p_path, &err);
+    const Vector<uint8_t> content = FileAccess::get_file_as_bytes(p_source_path, &err);
     if (err != OK)
     {
         return false;
     }
-    exported_paths_.insert(p_path);
-    add_file(p_path, content, p_remap);
-    JSB_EXPORTER_LOG(Verbose, "include raw: %s", p_path);
+    exported_paths_.insert(p_export_path);
+    add_file(p_export_path, content, p_remap);
+    JSB_EXPORTER_LOG(Verbose, "include raw: %s => %s", p_source_path, p_export_path);
     return true;
+}
+
+bool GodotJSExportPlugin::export_raw_file(const String& p_path, bool p_remap)
+{
+    return export_raw_file_as(p_path, p_path, p_remap);
+}
+
+bool GodotJSExportPlugin::export_directory_as(const String& p_source_dir, const String& p_export_dir)
+{
+    if (p_source_dir.is_empty() || p_export_dir.is_empty() || !DirAccess::dir_exists_absolute(p_source_dir))
+    {
+        return false;
+    }
+
+    Ref<DirAccess> dir = DirAccess::open(p_source_dir);
+    if (dir.is_null())
+    {
+        return false;
+    }
+
+    bool exported_any = false;
+    dir->set_include_hidden(true);
+    dir->list_dir_begin();
+    String filename = dir->get_next();
+    while (!filename.is_empty())
+    {
+        if (filename != "." && filename != "..")
+        {
+            const String source_path = p_source_dir.path_join(filename);
+            const String export_path = p_export_dir.path_join(filename);
+            if (dir->current_is_dir())
+            {
+                exported_any = export_directory_as(source_path, export_path) || exported_any;
+            }
+            else
+            {
+                exported_any = export_raw_file_as(source_path, export_path, false) || exported_any;
+            }
+        }
+        filename = dir->get_next();
+    }
+    dir->list_dir_end();
+    return exported_any;
 }
 
 bool GodotJSExportPlugin::export_module_files(const jsb::JavaScriptModule& p_module, bool p_remap)
@@ -231,6 +418,67 @@ bool GodotJSExportPlugin::export_compiled_script(const String& p_path, bool p_re
     return true;
 }
 
+#if JSB_WITH_V8
+bool GodotJSExportPlugin::generate_and_export_v8_packaged_cache(const String& p_entry_scene)
+{
+    JSB_EXPORTER_LOG(Verbose, "Preparing V8 packaged code cache from entry scene: %s", p_entry_scene);
+    if (p_entry_scene.is_empty() || !p_entry_scene.begins_with("res://"))
+    {
+        JSB_EXPORTER_LOG(Warning, "Skipping V8 packaged cache generation for invalid entry scene: %s", p_entry_scene);
+        return false;
+    }
+
+    const String packaged_cache_root = jsb::internal::Settings::get_v8_code_cache_packaged_path();
+    JSB_EXPORTER_LOG(Verbose, "V8 packaged code cache export path: %s", packaged_cache_root);
+    const String packaged_cache_relative_path = get_res_relative_path(packaged_cache_root);
+    if (packaged_cache_relative_path.is_empty())
+    {
+        JSB_EXPORTER_LOG(Warning, "Skipping V8 packaged cache generation because packaged_cache_path must be a non-empty res:// path: %s", packaged_cache_root);
+        return false;
+    }
+
+    Error temp_dir_err = OK;
+    Ref<DirAccess> temp_project_dir = DirAccess::create_temp("godotjs-v8-cache-", false, &temp_dir_err);
+    if (temp_dir_err != OK || temp_project_dir.is_null())
+    {
+        JSB_EXPORTER_LOG(Warning, "Failed to create temp project mirror for V8 cache export: %s", jsb_ext_error_string(temp_dir_err));
+        return false;
+    }
+
+    const String source_root = ProjectSettings::get_singleton()->get_resource_path();
+    const String mirror_root = temp_project_dir->get_current_dir();
+    if (!mirror_project_root(source_root, mirror_root, packaged_cache_root) ||
+        !write_v8_export_override_files(source_root, mirror_root, packaged_cache_root))
+    {
+        JSB_EXPORTER_LOG(Warning, "Failed to prepare temp project mirror for V8 cache export.");
+        return false;
+    }
+
+    List<String> args;
+    args.push_back("--headless");
+    args.push_back("--path");
+    args.push_back(mirror_root);
+    args.push_back("--scene");
+    args.push_back(p_entry_scene);
+
+    String helper_output;
+    int exit_code = 0;
+    const Error execute_err = OS::get_singleton()->execute(OS::get_singleton()->get_executable_path(), args, &helper_output, &exit_code, true);
+    if (execute_err != OK || exit_code != 0)
+    {
+        JSB_EXPORTER_LOG(Warning, "V8 cache export helper failed: err=%s exit_code=%d output=%s", jsb_ext_error_string(execute_err), exit_code, helper_output);
+        return false;
+    }
+
+    const String generated_cache_dir = mirror_root.path_join(packaged_cache_relative_path);
+    const bool exported = export_directory_as(generated_cache_dir, packaged_cache_root);
+    if (!exported)
+    {
+        JSB_EXPORTER_LOG(Warning, "V8 cache export helper ran, but no packaged cache files were found under %s", generated_cache_dir);
+    }
+    return exported;
+}
+#endif
 void GodotJSExportPlugin::_export_file(const String& p_path, const String& p_type, const HashSet<String>& p_features)
 {
     //TODO when exporting for web.impl, need to reorganize all scripts into a monolithic script (like webpack)? and preload it before everything get run.

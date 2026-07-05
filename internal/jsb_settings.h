@@ -40,6 +40,20 @@ namespace jsb::internal
 
         static bool get_camel_case_bindings_enabled();
 
+#if JSB_WITH_V8
+        static bool get_v8_code_cache_unsafe_user_enabled();
+
+        static String get_v8_code_cache_unsafe_user_path();
+
+        static String get_v8_code_cache_packaged_path();
+
+        static bool is_v8_code_cache_packaged_generation_enabled();
+
+        static bool is_v8_code_cache_logging_enabled();
+
+        static String get_v8_code_cache_entry_scene();
+#endif
+
         static bool is_packaging_with_source_map();
 
         static PackedStringArray get_packaging_include_files();
