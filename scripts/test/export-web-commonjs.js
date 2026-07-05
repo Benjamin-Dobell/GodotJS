@@ -123,12 +123,20 @@ function writeProjectMainSceneOverride() {
     const previous = readFileSync(projectConfigPath, "utf-8");
     const currentMainScene = 'run/main_scene="res://tests/Start.tscn"';
     const smokeMainScene = `run/main_scene="${smokeScene}"`;
+    const staticAssetsConfig = `
+[GodotJS]
+
+editor/packaging/static_assets=PackedStringArray("res://static")
+`;
 
     if (!previous.includes(currentMainScene)) {
         throw new Error(`project main scene did not match expected test project value in ${projectConfigPath}`);
     }
+    if (previous.includes("[GodotJS]")) {
+        throw new Error(`test project already has a GodotJS section in ${projectConfigPath}`);
+    }
 
-    writeFileSync(projectConfigPath, previous.replace(currentMainScene, smokeMainScene), "utf-8");
+    writeFileSync(projectConfigPath, previous.replace(currentMainScene, smokeMainScene) + staticAssetsConfig, "utf-8");
 
     return function restoreProjectConfig() {
         writeFileSync(projectConfigPath, previous, "utf-8");

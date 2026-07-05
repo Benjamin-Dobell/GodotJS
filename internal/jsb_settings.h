@@ -60,7 +60,7 @@ namespace jsb::internal
 
         static PackedStringArray get_packaging_include_directories();
 
-        static PackedStringArray get_packaging_commonjs_packed_script_paths();
+        static PackedStringArray get_packaging_static_assets();
 
         static bool is_packaging_referenced_node_modules();
 

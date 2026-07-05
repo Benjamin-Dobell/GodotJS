@@ -45,7 +45,7 @@ namespace jsb::internal
     static constexpr char kRtPackagingWithSourceMap[] = JSB_MODULE_NAME_STRING "/editor/packaging/source_map_included";
     static constexpr char kRtPackagingIncludeFiles[] = JSB_MODULE_NAME_STRING "/editor/packaging/include_files";
     static constexpr char kRtPackagingIncludeDirectories[] = JSB_MODULE_NAME_STRING "/editor/packaging/include_directories";
-    static constexpr char kRtPackagingCommonJSPackedScriptPaths[] = JSB_MODULE_NAME_STRING "/editor/packaging/commonjs_packed_script_paths";
+    static constexpr char kRtPackagingStaticAssets[] = JSB_MODULE_NAME_STRING "/editor/packaging/static_assets";
     static constexpr char kRtPackagingReferencedNodeModules[] = JSB_MODULE_NAME_STRING "/editor/packaging/referenced_node_modules";
 
 
@@ -97,9 +97,6 @@ namespace jsb::internal
                                             ",*." JSB_TYPESCRIPT_EXT
 #endif
             ;
-            static constexpr char commonjs_packed_script_filter[] =
-                "*." JSB_JAVASCRIPT_EXT ",*." JSB_COMMONJS_EXT ",*." JSB_MODULE_EXT ",*." JSB_JSON_EXT;
-
             _GLOBAL_DEF(kRtDebuggerPort, 9229, JSB_SET_RESTART(true), JSB_SET_IGNORE_DOCS(false), JSB_SET_BASIC(false), JSB_SET_INTERNAL(false));
             _GLOBAL_DEF(kRtDebuggerSourceMapBaseUrl, "http://localhost:9230", JSB_SET_RESTART(false), JSB_SET_IGNORE_DOCS(false), JSB_SET_BASIC(false), JSB_SET_INTERNAL(false));
             _GLOBAL_DEF(kRtDebuggerWaitForDebugger, false, JSB_SET_RESTART(false), JSB_SET_IGNORE_DOCS(false), JSB_SET_BASIC(true),  JSB_SET_INTERNAL(false));
@@ -155,12 +152,12 @@ namespace jsb::internal
             }
 
             {
-                PropertyInfo PackagingCommonJSPackedScriptPaths;
-                PackagingCommonJSPackedScriptPaths.type = Variant::ARRAY;
-                PackagingCommonJSPackedScriptPaths.name = kRtPackagingCommonJSPackedScriptPaths;
-                PackagingCommonJSPackedScriptPaths.hint = PROPERTY_HINT_ARRAY_TYPE;
-                PackagingCommonJSPackedScriptPaths.hint_string = vformat("%s/%s:%s", Variant::STRING, PROPERTY_HINT_FILE, commonjs_packed_script_filter);
-                _GLOBAL_DEF(PackagingCommonJSPackedScriptPaths, Array(), false, JSB_SET_IGNORE_DOCS(false), JSB_SET_BASIC(true),  JSB_SET_INTERNAL(false));
+                PropertyInfo PackagingStaticAssets;
+                PackagingStaticAssets.type = Variant::ARRAY;
+                PackagingStaticAssets.name = kRtPackagingStaticAssets;
+                PackagingStaticAssets.hint = PROPERTY_HINT_ARRAY_TYPE;
+                PackagingStaticAssets.hint_string = vformat("%s", Variant::STRING);
+                _GLOBAL_DEF(PackagingStaticAssets, Array(), false, JSB_SET_IGNORE_DOCS(false), JSB_SET_BASIC(true),  JSB_SET_INTERNAL(false));
             }
 
             _GLOBAL_DEF(kRtPackagingReferencedNodeModules, true, false);
@@ -237,11 +234,11 @@ namespace jsb::internal
         return (PackedStringArray) GLOBAL_GET(kRtPackagingIncludeDirectories);
     }
 
-    PackedStringArray Settings::get_packaging_commonjs_packed_script_paths()
+    PackedStringArray Settings::get_packaging_static_assets()
     {
         init_settings();
         // rely on auto variant convert from Array
-        return (PackedStringArray) GLOBAL_GET(kRtPackagingCommonJSPackedScriptPaths);
+        return (PackedStringArray) GLOBAL_GET(kRtPackagingStaticAssets);
     }
 
     bool Settings::is_packaging_referenced_node_modules()

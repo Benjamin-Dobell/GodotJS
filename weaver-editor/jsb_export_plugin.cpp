@@ -187,7 +187,7 @@ bool GodotJSExportPlugin::is_commonjs_external_file(const String& p_path)
     return is_javascript_like_file(p_path) || p_path.ends_with("." JSB_JSON_EXT);
 }
 
-String GodotJSExportPlugin::normalize_commonjs_packed_script_path(const String& p_path)
+String GodotJSExportPlugin::normalize_static_asset_path(const String& p_path)
 {
     String normalized_path = p_path.strip_edges().replace("\\", "/");
     if (normalized_path.is_empty())
@@ -222,20 +222,15 @@ bool GodotJSExportPlugin::is_web_commonjs_export_enabled() const
     return web_commonjs_export_;
 }
 
-bool GodotJSExportPlugin::is_web_commonjs_packed_script_path(const String& p_path) const
+bool GodotJSExportPlugin::is_static_asset_path(const String& p_path) const
 {
-    if (!is_web_commonjs_export_enabled() || !is_commonjs_external_file(p_path))
-    {
-        return false;
-    }
-
-    const String normalized_path = normalize_commonjs_packed_script_path(p_path);
+    const String normalized_path = normalize_static_asset_path(p_path);
     if (normalized_path.is_empty())
     {
         return false;
     }
 
-    return web_commonjs_packed_script_paths_.has(normalized_path);
+    return static_asset_paths_.has(normalized_path);
 }
 
 void GodotJSExportPlugin::export_raw_files(const PackedStringArray &p_paths, bool p_permit_typescript)
@@ -311,28 +306,17 @@ void GodotJSExportPlugin::_export_begin(const HashSet<String>& p_features, bool 
     JSB_EXPORTER_LOG(Verbose, "export_begin path: %s", p_path);
     exported_paths_.clear();
     external_paths_.clear();
-    web_commonjs_packed_script_paths_.clear();
+    static_asset_paths_.clear();
     web_commonjs_export_ = p_features.has("web") && (bool) get_option(kWebCommonJSExportOption);
     web_commonjs_export_base_dir_ = web_commonjs_export_ ? p_path.get_base_dir() : String();
+    const PackedStringArray static_assets = jsb::internal::Settings::get_packaging_static_assets();
+    for (const String& static_asset_path : static_assets)
+    {
+        export_static_asset_path(static_asset_path);
+    }
+
     if (web_commonjs_export_)
     {
-        const PackedStringArray packed_script_paths = jsb::internal::Settings::get_packaging_commonjs_packed_script_paths();
-        for (const String& packed_script_path : packed_script_paths)
-        {
-            const String normalized_path = normalize_commonjs_packed_script_path(packed_script_path);
-            if (normalized_path.is_empty())
-            {
-                continue;
-            }
-
-            if (!is_commonjs_external_file(normalized_path))
-            {
-                JSB_EXPORTER_LOG(Warning, "Ignoring Web CommonJS packed static asset with unsupported extension: %s", packed_script_path);
-                continue;
-            }
-
-            web_commonjs_packed_script_paths_.insert(normalized_path);
-        }
         JSB_EXPORTER_LOG(Verbose, "Web CommonJS export enabled. Loose scripts will be written under %s", web_commonjs_export_base_dir_);
     }
 
@@ -393,6 +377,89 @@ bool GodotJSExportPlugin::export_raw_file_as(const String& p_source_path, const 
 bool GodotJSExportPlugin::export_raw_file(const String& p_path, bool p_remap)
 {
     return export_raw_file_as(p_path, p_path, p_remap);
+}
+
+bool GodotJSExportPlugin::export_static_asset_file(const String& p_path)
+{
+    const String normalized_path = normalize_static_asset_path(p_path);
+    if (normalized_path.is_empty())
+    {
+        return false;
+    }
+
+    const bool exported = export_raw_file(normalized_path, false);
+    if (exported)
+    {
+        static_asset_paths_.insert(normalized_path);
+        JSB_EXPORTER_LOG(Verbose, "include static asset: %s", normalized_path);
+    }
+    return exported;
+}
+
+bool GodotJSExportPlugin::export_static_asset_directory(const String& p_dir)
+{
+    const String normalized_dir = normalize_static_asset_path(p_dir);
+    if (normalized_dir.is_empty())
+    {
+        return false;
+    }
+
+    Ref<DirAccess> dir = DirAccess::open(normalized_dir);
+    if (dir.is_null())
+    {
+        JSB_EXPORTER_LOG(Warning, "Could not open static asset directory for traversal: %s", normalized_dir);
+        return false;
+    }
+
+    bool exported_any = false;
+    dir->set_include_hidden(true);
+    dir->list_dir_begin();
+    String filename = dir->get_next();
+    while (!filename.is_empty())
+    {
+        if (filename != "." && filename != "..")
+        {
+            const String path = normalized_dir.path_join(filename);
+            if (dir->current_is_dir())
+            {
+                exported_any = export_static_asset_directory(path) || exported_any;
+            }
+            else if (filename == ".gdignore")
+            {
+                JSB_EXPORTER_LOG(Verbose, "skip static asset marker: %s", path);
+            }
+            else
+            {
+                exported_any = export_static_asset_file(path) || exported_any;
+            }
+        }
+        filename = dir->get_next();
+    }
+    dir->list_dir_end();
+    return exported_any;
+}
+
+bool GodotJSExportPlugin::export_static_asset_path(const String& p_path)
+{
+    const String normalized_path = normalize_static_asset_path(p_path);
+    if (normalized_path.is_empty())
+    {
+        return false;
+    }
+
+    if (FileAccess::exists(normalized_path))
+    {
+        return export_static_asset_file(normalized_path);
+    }
+
+    Ref<DirAccess> dir = DirAccess::open(normalized_path);
+    if (dir.is_valid())
+    {
+        return export_static_asset_directory(normalized_path);
+    }
+
+    JSB_EXPORTER_LOG(Warning, "Could not find static asset path: %s", normalized_path);
+    return false;
 }
 
 void GodotJSExportPlugin::write_web_commonjs_manifest_marker(const String& p_export_path)
@@ -509,12 +576,12 @@ bool GodotJSExportPlugin::write_external_file_as(const String& p_source_path, co
 
 bool GodotJSExportPlugin::export_external_or_raw_file_as(const String& p_source_path, const String& p_export_path, bool p_remap)
 {
-    if (is_web_commonjs_packed_script_path(p_export_path))
+    if (is_static_asset_path(p_export_path))
     {
         const bool exported = export_raw_file_as(p_source_path, p_export_path, false);
         if (exported)
         {
-            JSB_EXPORTER_LOG(Verbose, "include Web CommonJS packed static asset: %s", p_export_path);
+            JSB_EXPORTER_LOG(Verbose, "include static asset: %s", p_export_path);
         }
         return exported;
     }
@@ -775,11 +842,10 @@ void GodotJSExportPlugin::_export_file(const String& p_path, const String& p_typ
 {
     //TODO when exporting for web.impl, need to reorganize all scripts into a monolithic script (like webpack)? and preload it before everything get run.
 
-    if (is_web_commonjs_packed_script_path(p_path))
+    if (is_static_asset_path(p_path))
     {
-        export_raw_file(p_path, false);
         skip();
-        JSB_EXPORTER_LOG(Verbose, "include Web CommonJS packed static asset: %s", p_path);
+        JSB_EXPORTER_LOG(Verbose, "skip static asset already included: %s", p_path);
         return;
     }
 

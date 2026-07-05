@@ -36,11 +36,11 @@ private:
     static bool is_web_platform(const Ref<EditorExportPlatform>& p_export_platform);
     static bool is_javascript_like_file(const String& p_path);
     static bool is_commonjs_external_file(const String& p_path);
-    static String normalize_commonjs_packed_script_path(const String& p_path);
+    static String normalize_static_asset_path(const String& p_path);
     static String get_res_relative_path(const String& p_res_path);
 
     bool is_web_commonjs_export_enabled() const;
-    bool is_web_commonjs_packed_script_path(const String& p_path) const;
+    bool is_static_asset_path(const String& p_path) const;
     void write_web_commonjs_manifest_marker(const String& p_export_path);
     bool write_external_file_as(const String& p_source_path, const String& p_export_path, bool p_wrap_commonjs);
     bool export_external_or_raw_file_as(const String& p_source_path, const String& p_export_path, bool p_remap);
@@ -51,6 +51,9 @@ private:
     bool export_raw_file_as(const String& p_source_path, const String& p_export_path, bool p_remap);
     bool export_raw_file(const String& p_path, bool p_remap);
     bool export_directory_as(const String& p_source_dir, const String& p_export_dir);
+    bool export_static_asset_file(const String& p_path);
+    bool export_static_asset_directory(const String& p_dir);
+    bool export_static_asset_path(const String& p_path);
     void export_raw_files(const PackedStringArray& p_paths, bool p_permit_typescript);
     void get_script_resources(const String &p_dir, Vector<String> &r_list, bool p_is_node_module = false);
 #if JSB_WITH_V8
@@ -59,7 +62,7 @@ private:
 
     HashSet<String> exported_paths_;
     HashSet<String> external_paths_;
-    HashSet<String> web_commonjs_packed_script_paths_;
+    HashSet<String> static_asset_paths_;
     bool web_commonjs_export_ = false;
     String web_commonjs_export_base_dir_;
     std::shared_ptr<jsb::Environment> env_;
