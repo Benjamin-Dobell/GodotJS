@@ -4,6 +4,30 @@
 #include "../internal/jsb_path_util.h"
 #include "../internal/jsb_web_commonjs_manifest.h"
 
+#if JSB_WITH_WEB && JSB_DEBUG && !defined(TOOLS_ENABLED)
+#include <emscripten/emscripten.h>
+#endif
+
+#if JSB_WITH_WEB && JSB_DEBUG && !defined(TOOLS_ENABLED)
+namespace
+{
+    String capture_web_callstack()
+    {
+        const int flags = EM_LOG_JS_STACK;
+        const int required_size = emscripten_get_callstack(flags, nullptr, 0);
+        if (required_size <= 0)
+        {
+            return String();
+        }
+
+        Vector<char> stack;
+        stack.resize(required_size);
+        emscripten_get_callstack(flags, stack.ptrw(), stack.size());
+        return String::utf8(stack.ptr());
+    }
+}
+#endif
+
 GodotJSScript::GodotJSScript(): script_list_(this)
 {
     {
@@ -536,7 +560,17 @@ Error GodotJSScript::load_source_code(const String &p_path)
             return OK;
         }
 #endif
-        JSB_LOG(Warning, "can not read source from %s", p_path);
+#if JSB_WITH_WEB && JSB_DEBUG && !defined(TOOLS_ENABLED)
+        const String callstack = capture_web_callstack();
+        if (!callstack.is_empty())
+        {
+            JSB_LOG(Warning, "can not read source from %s\n%s", p_path, callstack);
+        }
+        else
+#endif
+        {
+            JSB_LOG(Warning, "can not read source from %s", p_path);
+        }
     }
     else
     {
