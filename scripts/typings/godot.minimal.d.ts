@@ -117,6 +117,7 @@ declare module "godot-jsb" {
         ): void;
         function add_script_tool(constructor: GObjectConstructor): void;
         function add_script_icon(constructor: GObjectConstructor, path: string): void;
+        function set_script_hot_reload(constructor: GObjectConstructor, policy: number): void;
         function add_script_rpc(
             prototype: GObject,
             property_key: string,
@@ -142,6 +143,7 @@ declare module "godot-jsb" {
 
         function add_module(id: string, obj: any): void;
         function find_module(id: string): any;
+        function replace_module_source(id: string, source: string): string[];
         function notify_microtasks_run(): void;
 
         namespace names {

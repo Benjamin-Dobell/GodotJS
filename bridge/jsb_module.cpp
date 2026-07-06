@@ -41,22 +41,24 @@ namespace jsb
 
     void JavaScriptModule::mark_as_reloaded()
     {
-#if JSB_SUPPORT_RELOAD && defined(TOOLS_ENABLED)
+#if JSB_SUPPORT_RELOAD
         reload_requested = false;
 #endif
     }
 
     void JavaScriptModule::force_mark_as_reloading()
     {
-#if JSB_SUPPORT_RELOAD && defined(TOOLS_ENABLED)
+#if JSB_SUPPORT_RELOAD
         // Bypass the mtime/md5 gate — used by transitive invalidation when a
         // dependency reloaded but our own source bytes didn't change. Bumping
         // time_modified to the current disk mtime keeps the cache coherent
         // with the next mark_as_reloading() probe.
+#ifdef TOOLS_ENABLED
         if (is_reloadable())
         {
             time_modified = FileAccess::get_modified_time(source_info.source_filepath);
         }
+#endif
         reload_requested = true;
 #endif
     }

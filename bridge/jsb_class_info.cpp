@@ -93,6 +93,7 @@ namespace jsb
         p_class_info->rpc_config.clear();
         p_class_info->method_cache.clear();
         p_class_info->flags = ScriptClassFlags::None;
+        p_class_info->hot_reload = ScriptHotReload::Recreate;
 
         JSB_LOG(VeryVerbose, "godot js class name %s (native: %s)", p_class_info->js_class_name, p_class_info->native_class_name);
 
@@ -203,6 +204,25 @@ namespace jsb
             if (v8::Local<v8::Value> val; class_obj->Get(p_context, jsb_symbol(environment, ClassIcon)).ToLocal(&val))
             {
                 p_class_info->icon = impl::Helper::to_string(isolate, val);
+            }
+        }
+
+        // hot reload policy (@hotReload)
+        {
+            v8::Local<v8::Value> val;
+            if (class_obj->Get(p_context, jsb_symbol(environment, ClassHotReload)).ToLocal(&val) && val->IsUint32())
+            {
+                const uint32_t policy = val.As<v8::Uint32>()->Value();
+                switch (policy)
+                {
+                    case ScriptHotReload::Recreate:
+                    case ScriptHotReload::Prototype:
+                        p_class_info->hot_reload = (ScriptHotReload::Type) policy;
+                        break;
+                    default:
+                        JSB_LOG(Warning, "(script-parser) unsupported hot reload policy %d for %s", policy, p_class_info->js_class_name);
+                        break;
+                }
             }
         }
 

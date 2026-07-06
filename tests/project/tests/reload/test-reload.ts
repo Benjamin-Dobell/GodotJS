@@ -14,7 +14,7 @@ async function runReloadTest(): Promise<void> {
     reader.close();
 
     try {
-        const initial = require("./target");
+        const initial = require(TARGET_PATH);
         const initialValue = initial.getValue();
         if (initialValue !== 1) {
             throw new Error(`expected initial value 1, got ${initialValue}`);
@@ -31,7 +31,7 @@ async function runReloadTest(): Promise<void> {
 
         const t0 = Date.now();
         jsb.internal.scan_external_changes();
-        const reloaded = require("./target");
+        const reloaded = require(TARGET_PATH);
         const elapsed = Date.now() - t0;
 
         const newValue = reloaded.getValue();

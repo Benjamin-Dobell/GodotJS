@@ -114,6 +114,8 @@ private:
     // [JS] export & declare in a single line, matches 'exports.default = class ClassName extends BaseName'
     Ref<RegEx> js_class_name_matcher1_;
 
+    Error reload_dirty_modules(const Vector<StringName>& p_dirty_modules, Vector<StringName>* r_reloaded_modules = nullptr);
+
 public:
     jsb_force_inline static GodotJSScriptLanguage* get_singleton() { return singleton_; }
 
@@ -129,6 +131,8 @@ public:
     }
 
     void scan_external_changes();
+    bool is_main_environment(const jsb::Environment* p_env) const { return environment_.get() == p_env; }
+    Vector<StringName> replace_module_source(const String& p_module_id, const String& p_source, Error* r_error = nullptr);
 
     void add_script_call_profile_info(const String& p_path, const StringName& p_class, const StringName& p_method, uint64_t p_time);
 

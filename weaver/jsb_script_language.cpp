@@ -290,25 +290,23 @@ Vector<ScriptLanguage::ScriptTemplate> GodotJSScriptLanguage::get_built_in_templ
 #if GODOT_4_3_OR_NEWER
 void GodotJSScriptLanguage::reload_scripts(const Array& p_scripts, bool p_soft_reload)
 {
-    JSB_LOG(Verbose, "TODO [GodotJSScriptLanguage::reload_scripts] NOT IMPLEMENTED");
+    JSB_LOG(Verbose, "[GodotJSScriptLanguage::reload_scripts] ignored; GodotJS reload is driven by external change scanning so compiled script outputs are handled");
 }
 
 void GodotJSScriptLanguage::profiling_set_save_native_calls(bool p_enable)
 {
-    JSB_LOG(Verbose, "TODO [GodotJSScriptLanguage::profiling_set_save_native_calls] NOT IMPLEMENTED");
+    JSB_LOG(Verbose, "[GodotJSScriptLanguage::profiling_set_save_native_calls] ignored; native-call save profiling is not implemented by GodotJS");
 }
 #endif
 
 void GodotJSScriptLanguage::reload_all_scripts()
 {
-    //TODO temporarily ignored because it's only called from `RemoteDebugger`
-    JSB_LOG(Verbose, "TODO [GodotJSScriptLanguage::reload_all_scripts] temporarily ignored because it's only called from `RemoteDebugger`");
+    JSB_LOG(Verbose, "[GodotJSScriptLanguage::reload_all_scripts] ignored; GodotJS reload is driven by external change scanning so compiled script outputs are handled");
 }
 
 void GodotJSScriptLanguage::reload_tool_script(const Ref<Script>& p_script, bool p_soft_reload)
 {
-    //TODO temporarily ignored because it's only called from `ResourceSaver` (we usually write typescripts in vscode)
-    JSB_LOG(Verbose, "TODO [GodotJSScriptLanguage::reload_tool_script] temporarily ignored because it's only called from `ResourceSaver` (we usually write typescripts in vscode)");
+    JSB_LOG(Verbose, "[GodotJSScriptLanguage::reload_tool_script] ignored; GodotJS reload is driven by external change scanning so compiled script outputs are handled");
 }
 
 void GodotJSScriptLanguage::get_recognized_extensions(List<String>* p_extensions) const
@@ -414,15 +412,54 @@ String GodotJSScriptLanguage::get_type() const
 
 void GodotJSScriptLanguage::scan_external_changes()
 {
-    const Vector<StringName> reloaded = environment_->scan_external_changes();
+    const Vector<StringName> dirty_modules = environment_->scan_external_changes();
+    const Error err = reload_dirty_modules(dirty_modules);
+    if (err != OK)
+    {
+        JSB_LOG(Warning, "failed to reload externally changed modules: %s", jsb_ext_error_string(err));
+    }
+}
 
-    // Build a set of reloaded module ids so we can narrow the rebind set to
+Vector<StringName> GodotJSScriptLanguage::replace_module_source(const String& p_module_id, const String& p_source, Error* r_error)
+{
+    StringName resolved_module_id;
+    bool had_previous_override = false;
+    String previous_override;
+    Error err = OK;
+    const Vector<StringName> dirty_modules = environment_->replace_module_source(p_module_id, p_source, &resolved_module_id, &had_previous_override, &previous_override, &err);
+    if (err == OK)
+    {
+        Vector<StringName> reloaded_modules;
+        err = reload_dirty_modules(dirty_modules, &reloaded_modules);
+        if (err != OK)
+        {
+            environment_->restore_module_source_override(resolved_module_id, had_previous_override, previous_override);
+            const Error rollback_err = environment_->restore_reloaded_modules(reloaded_modules);
+            if (rollback_err != OK)
+            {
+                JSB_LOG(Warning, "failed to roll back reloaded modules after source replacement failure: %s", jsb_ext_error_string(rollback_err));
+            }
+        }
+    }
+    if (r_error)
+    {
+        *r_error = err;
+    }
+    return dirty_modules;
+}
+
+Error GodotJSScriptLanguage::reload_dirty_modules(const Vector<StringName>& p_dirty_modules, Vector<StringName>* r_reloaded_modules)
+{
+    if (p_dirty_modules.is_empty())
+    {
+        return OK;
+    }
+
+    // Build a set of dirty module ids so we can narrow the refresh set to
     // only the scripts whose module (or one of its transitive dependencies)
-    // actually changed. env's scan body already cascaded dirty marks through
-    // the children graph (see jsb_environment.cpp), so any script that needs
-    // a fresh prototype is in this set.
-    HashSet<StringName> reloaded_set;
-    for (const StringName& id : reloaded) reloaded_set.insert(id);
+    // actually changed.
+    HashSet<StringName> dirty_set;
+    for (const StringName& id : p_dirty_modules) dirty_set.insert(id);
 
     // Snapshot script_list_ into Refs under the lock, then iterate the snapshot
     // instead of the live list. mutex_ is a recursive Mutex (Godot's Mutex wraps
@@ -444,6 +481,13 @@ void GodotJSScriptLanguage::scan_external_changes()
         }
     }
 
+    struct ScriptReload
+    {
+        Ref<GodotJSScript> script;
+        Vector<GodotJSScript::HotReloadInstanceState> recreate_state;
+    };
+    Vector<ScriptReload> script_reloads;
+
     for (const Ref<GodotJSScript>& script : snapshot)
     {
 #ifdef TOOLS_ENABLED
@@ -451,13 +495,26 @@ void GodotJSScriptLanguage::scan_external_changes()
         // .js counterpart was missing at load gets re-attached once it appears
         script->load_module_if_missing();
 #endif
-        if (reloaded_set.has(script->get_module_id()))
+        if (dirty_set.has(script->get_module_id()))
         {
-            // Inspector refresh: force_reload_for_scan emits the standard
-            // Script::changed signal which the editor inspector listens to.
-            script->force_reload_for_scan();
+            ScriptReload reload;
+            reload.script = script;
+            script->capture_hot_reload_state(reload.recreate_state);
+            script_reloads.push_back(reload);
         }
     }
+
+    const Error err = environment_->reload_modules(p_dirty_modules, r_reloaded_modules);
+    if (err != OK)
+    {
+        return err;
+    }
+
+    for (const ScriptReload& reload : script_reloads)
+    {
+        reload.script->force_reload_for_scan(&reload.recreate_state);
+    }
+    return OK;
 }
 
 void GodotJSScriptLanguage::thread_enter()

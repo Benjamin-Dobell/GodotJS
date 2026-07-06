@@ -1106,6 +1106,11 @@ namespace jsb
         JSB_LOG(Error, "duplicate adding persistent object: %d", (uintptr_t) p_pointer);
     }
 
+    void Environment::detach_godot_object(Object* p_object)
+    {
+        free_object(p_object, FinalizationType::None);
+    }
+
     void* Environment::get_verified_object(const v8::Local<v8::Object>& p_obj, NativeClassType::Type p_type) const
     {
         if (!TypeConvert::is_object(p_obj, p_type))
@@ -1575,6 +1580,10 @@ namespace jsb
         for (const KeyValue<StringName, JavaScriptModule*>& kv : module_cache_.modules_)
         {
             JavaScriptModule* module = kv.value;
+            if (module_source_overrides_.has(module->id))
+            {
+                continue;
+            }
             // Script-bearing modules are no longer skipped. The reload path
             // inside _load_module already handles re-execution and
             // ScriptClassInfo::_parse_script_class; GodotJSScriptLanguage
@@ -1586,6 +1595,16 @@ namespace jsb
                 dirty_set.insert(module->id);
             }
         }
+
+        collect_transitive_reload_modules(requested_modules, dirty_set);
+
+        return requested_modules;
+    }
+
+    void Environment::collect_transitive_reload_modules(Vector<StringName>& r_requested_modules, HashSet<StringName>& r_dirty_set)
+    {
+        v8::Isolate* isolate = isolate_;
+        const v8::Local<v8::Context> context = context_.Get(isolate);
 
         // Transitive invalidation: any module whose `children` array contains
         // a dirty module is also dirty. Fixed-point iterate over the module
@@ -1601,7 +1620,7 @@ namespace jsb
             for (const KeyValue<StringName, JavaScriptModule*>& kv : module_cache_.modules_)
             {
                 JavaScriptModule* module = kv.value;
-                if (dirty_set.has(module->id)) continue;
+                if (r_dirty_set.has(module->id)) continue;
                 const v8::Local<v8::Object> module_obj = module->module.Get(isolate);
                 v8::Local<v8::Value> children_val;
                 if (!module_obj->Get(context, children_name).ToLocal(&children_val) || !children_val->IsArray()) continue;
@@ -1615,7 +1634,7 @@ namespace jsb
                     v8::Local<v8::Value> child_id_val;
                     if (!child_val.As<v8::Object>()->Get(context, id_name).ToLocal(&child_id_val) || !child_id_val->IsString()) continue;
                     const String child_id_str = impl::Helper::to_string(isolate, child_id_val);
-                    if (dirty_set.has(StringName(child_id_str)))
+                    if (r_dirty_set.has(StringName(child_id_str)))
                     {
                         depends_on_dirty = true;
                         break;
@@ -1625,19 +1644,193 @@ namespace jsb
                 {
                     JSB_LOG(Verbose, "[reload] cascaded dirty: %s (depends on a dirty module)", module->id);
                     module->force_mark_as_reloading();
-                    requested_modules.append(module->id);
-                    dirty_set.insert(module->id);
+                    r_requested_modules.append(module->id);
+                    r_dirty_set.insert(module->id);
                     changed = true;
                 }
             }
         }
+    }
 
-        for (const StringName& id : requested_modules)
+    Vector<StringName> Environment::replace_module_source(const String& p_module_id, const String& p_source, StringName* r_resolved_module_id, bool* r_had_previous_override, String* r_previous_override, Error* r_error)
+    {
+        check_internal_state();
+        v8::Isolate* isolate = isolate_;
+        v8::Isolate::Scope isolate_scope(isolate);
+        v8::HandleScope handle_scope(isolate);
+        v8::Local<v8::Context> context = context_.Get(isolate);
+        v8::Context::Scope context_scope(context);
+        if (r_error)
+        {
+            *r_error = OK;
+        }
+
+        String normalized_id = p_module_id;
+        if (internal::PathUtil::is_absolute_path(p_module_id))
+        {
+            String extracted_id;
+            if (internal::PathUtil::extract(p_module_id, extracted_id) == OK && !extracted_id.is_empty())
+            {
+                normalized_id = extracted_id;
+            }
+        }
+
+        StringName module_id = normalized_id;
+        if (JavaScriptModule* module = module_cache_.find(module_id))
+        {
+            if (!module->source_info.source_filepath.is_empty())
+            {
+                module_id = module->source_info.source_filepath;
+            }
+            else
+            {
+                JSB_LOG(Warning, "[reload] cannot replace non-source module: %s", module_id);
+                if (r_resolved_module_id)
+                {
+                    *r_resolved_module_id = module_id;
+                }
+                if (r_had_previous_override)
+                {
+                    *r_had_previous_override = false;
+                }
+                if (r_previous_override)
+                {
+                    *r_previous_override = String();
+                }
+                if (r_error)
+                {
+                    *r_error = ERR_UNAVAILABLE;
+                }
+                return {};
+            }
+        }
+        else
+        {
+            ModuleSourceInfo source_info;
+            if (find_module_resolver(normalized_id, source_info))
+            {
+                module_id = source_info.source_filepath;
+            }
+        }
+
+        if (r_resolved_module_id)
+        {
+            *r_resolved_module_id = module_id;
+        }
+        if (r_had_previous_override || r_previous_override)
+        {
+            if (const String* previous = module_source_overrides_.getptr(module_id))
+            {
+                if (r_had_previous_override)
+                {
+                    *r_had_previous_override = true;
+                }
+                if (r_previous_override)
+                {
+                    *r_previous_override = *previous;
+                }
+            }
+            else
+            {
+                if (r_had_previous_override)
+                {
+                    *r_had_previous_override = false;
+                }
+                if (r_previous_override)
+                {
+                    *r_previous_override = String();
+                }
+            }
+        }
+
+        module_source_overrides_[module_id] = p_source;
+
+        Vector<StringName> requested_modules;
+        HashSet<StringName> dirty_set;
+        if (JavaScriptModule* module = module_cache_.find(module_id))
+        {
+            JSB_LOG(Verbose, "[reload] replaced source and marked dirty: %s", module->id);
+            module->force_mark_as_reloading();
+            requested_modules.append(module->id);
+            dirty_set.insert(module->id);
+            collect_transitive_reload_modules(requested_modules, dirty_set);
+        }
+        else
+        {
+            JSB_LOG(Verbose, "[reload] replaced source for unloaded module: %s", module_id);
+        }
+
+        return requested_modules;
+    }
+
+    void Environment::restore_module_source_override(const StringName& p_module_id, bool p_had_previous_override, const String& p_previous_override)
+    {
+        if (p_had_previous_override)
+        {
+            module_source_overrides_[p_module_id] = p_previous_override;
+        }
+        else
+        {
+            module_source_overrides_.erase(p_module_id);
+        }
+    }
+
+    bool Environment::has_module_source_override(const String& p_module_id) const
+    {
+        return module_source_overrides_.has(StringName(p_module_id));
+    }
+
+    bool Environment::get_module_source_override(const String& p_module_id, String& r_source) const
+    {
+        if (const String* source = module_source_overrides_.getptr(StringName(p_module_id)))
+        {
+            r_source = *source;
+            return true;
+        }
+        return false;
+    }
+
+    Error Environment::reload_modules(const Vector<StringName>& p_module_ids, Vector<StringName>* r_reloaded_modules)
+    {
+        if (r_reloaded_modules)
+        {
+            r_reloaded_modules->clear();
+        }
+        for (const StringName& id : p_module_ids)
         {
             JSB_LOG(Verbose, "[reload] reloading via load(): %s", id);
-            load(id);
+            const Error err = load(id);
+            if (err != OK)
+            {
+                return err;
+            }
+            if (r_reloaded_modules)
+            {
+                r_reloaded_modules->append(id);
+            }
         }
-        return requested_modules;
+        return OK;
+    }
+
+    Error Environment::restore_reloaded_modules(const Vector<StringName>& p_module_ids)
+    {
+        Error first_error = OK;
+        for (const StringName& id : p_module_ids)
+        {
+            JavaScriptModule* module = module_cache_.find(id);
+            if (!module)
+            {
+                continue;
+            }
+            JSB_LOG(Verbose, "[reload] rolling back reloaded module: %s", id);
+            module->force_mark_as_reloading();
+            const Error err = load(id);
+            if (err != OK && first_error == OK)
+            {
+                first_error = err;
+            }
+        }
+        return first_error;
     }
 
     ModuleReloadResult::Type Environment::mark_as_reloading(const StringName& p_name)
@@ -1772,21 +1965,36 @@ namespace jsb
                     JSB_LOG(VeryVerbose, "reload module %s", module_id);
                     resolved_module->mark_as_reloaded();
 
-                    // Reset `exports` to a fresh Object before re-running the
-                    // wrapped source. Compilers targeting CJS for ES `export default`
-                    // emit `Object.defineProperty(exports, "default", { configurable: false, ... })`,
-                    // which throws "Cannot redefine property" on the second run
-                    // when the OLD non-configurable "default" still sits on
-                    // exports. Without this reset, the reload silently fails
-                    // for any module using ES-module-style default exports.
+                    // Rebuild module-local state before re-running the wrapper.
+                    // `exports` must be fresh for non-configurable CJS default
+                    // exports, and `children` must match the new dependency graph.
+                    v8::Local<v8::Value> old_exports;
+                    v8::Local<v8::Value> old_children;
                     {
                         v8::Local<v8::Object> fresh_exports = v8::Object::New(isolate);
                         const v8::Local<v8::Object> module_obj_local = resolved_module->module.Get(isolate);
+                        if (!module_obj_local->Get(context, jsb_name(this, exports)).ToLocal(&old_exports))
+                        {
+                            old_exports = v8::Undefined(isolate);
+                        }
+                        if (!module_obj_local->Get(context, jsb_name(this, children)).ToLocal(&old_children))
+                        {
+                            old_children = v8::Array::New(isolate);
+                        }
                         module_obj_local->Set(context, jsb_name(this, exports), fresh_exports).Check();
+                        module_obj_local->Set(context, jsb_name(this, children), v8::Array::New(isolate)).Check();
                         resolved_module->exports.Reset(isolate, fresh_exports);
                     }
                     if (!resolver->load(this, source_info.source_filepath, *resolved_module))
                     {
+                        const v8::Local<v8::Object> module_obj_local = resolved_module->module.Get(isolate);
+                        module_obj_local->Set(context, jsb_name(this, exports), old_exports).Check();
+                        module_obj_local->Set(context, jsb_name(this, children), old_children).Check();
+                        resolved_module->exports.Reset(isolate, old_exports);
+                        if (!module_source_overrides_.has(source_info.source_filepath))
+                        {
+                            resolved_module->force_mark_as_reloading();
+                        }
                         return nullptr;
                     }
 
@@ -2100,6 +2308,10 @@ namespace jsb
         {
             JSB_LOG(Warning, "something went wrong on loading '%s'\n%s", p_name, BridgeHelper::get_exception(try_catch_run));
             return ERR_COMPILATION_FAILED;
+        }
+        if (!module)
+        {
+            return ERR_CANT_RESOLVE;
         }
         return OK;
     }

@@ -23,6 +23,7 @@ export default class Start extends Node {
                 "res://tests/worker/Worker.tscn",
                 "res://tests/reload/Reload.tscn",
                 "res://tests/reload/ScriptClassReload.tscn",
+                "res://tests/reload/RuntimeReplace.tscn",
             ];
 
             for (const scene of scenes) {

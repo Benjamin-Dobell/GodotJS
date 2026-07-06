@@ -7,6 +7,7 @@ const jsb = require("godot-jsb") as { internal: { scan_external_changes: () => v
 
 const SCRIPT_PATH = "res://tests/reload/script-class-target.js";
 const BASE_PATH = "res://tests/reload/transitive-base.js";
+const DEPENDENT_PATH = "res://tests/reload/transitive-dependent.js";
 
 function readFile(path: string): string {
     const reader = FileAccess.open(path, FileAccess.ModeFlags.READ);
@@ -36,7 +37,7 @@ function sleep(ms: number): Promise<void> {
 async function runDirectScriptClassReloadTest(): Promise<void> {
     const original = readFile(SCRIPT_PATH);
     try {
-        const before = require("./script-class-target");
+        const before = require(SCRIPT_PATH);
         const beforeProto = before?.default?.prototype;
         if (typeof beforeProto?.getValue !== "function") {
             throw new Error("baseline: getValue() not found on prototype");
@@ -51,7 +52,7 @@ async function runDirectScriptClassReloadTest(): Promise<void> {
 
         jsb.internal.scan_external_changes();
 
-        const after = require("./script-class-target");
+        const after = require(SCRIPT_PATH);
         const afterProto = after?.default?.prototype;
         if (typeof afterProto?.getSentinel !== "function") {
             throw new Error(
@@ -77,7 +78,7 @@ async function runDirectScriptClassReloadTest(): Promise<void> {
 async function runTransitiveReloadTest(): Promise<void> {
     const baseOriginal = readFile(BASE_PATH);
     try {
-        const beforeDep = require("./transitive-dependent");
+        const beforeDep = require(DEPENDENT_PATH);
         const beforeCombined = beforeDep?.default?.prototype?.getCombined?.call(null);
         if (beforeCombined !== 11) {
             throw new Error(`baseline: getCombined() returned ${beforeCombined} (expected 11)`);
@@ -90,7 +91,7 @@ async function runTransitiveReloadTest(): Promise<void> {
 
         jsb.internal.scan_external_changes();
 
-        const afterDep = require("./transitive-dependent");
+        const afterDep = require(DEPENDENT_PATH);
         const afterCombined = afterDep?.default?.prototype?.getCombined?.call(null);
         if (afterCombined !== 101) {
             throw new Error(

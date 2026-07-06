@@ -43,6 +43,7 @@ namespace jsb
             ClassImplicitReadyFuncs, // array of all @onready annotations
             ClassToolScript,         // @tool annotated scripts
             ClassIcon,               // @icon
+            ClassHotReload,          // @hotReload
             ClassRPCConfig,          // @rpc annotation for rpc functions
             Doc,
             MemberDocMap,
@@ -203,6 +204,9 @@ namespace jsb
         // module_id => loader
         HashMap<StringName, class IModuleLoader*> module_loaders_;
         Vector<IModuleResolver*> module_resolvers_;
+        HashMap<StringName, String> module_source_overrides_;
+
+        void collect_transitive_reload_modules(Vector<StringName>& r_requested_modules, HashSet<StringName>& r_dirty_set);
 
 #if JSB_WITH_ESSENTIALS
         JSTimerTags<uint64_t> timer_tags_;
@@ -437,12 +441,22 @@ namespace jsb
         // caller should handle the exception if it's not called from js
         JavaScriptModule* _load_module(const String& p_parent_id, const String& p_module_id);
 
-        // manually scan changes of modules,
-        // will reload IMMEDIATELY and return the list of module ids whose
-        // sources changed on disk and were re-executed. Script-bearing modules
-        // are included; callers can use the list to rebind live GodotJSScript
-        // instances.
+        // manually scan changes of modules and return the transitive dirty set.
+        // This only marks modules for reload; call reload_modules() after any
+        // pre-reload state capture is complete.
         Vector<StringName> scan_external_changes();
+
+        // Override a module's source in memory and mark the loaded module plus
+        // transitive dependents for reload. This does not read from disk and is
+        // available outside editor builds.
+        Vector<StringName> replace_module_source(const String& p_module_id, const String& p_source, StringName* r_resolved_module_id = nullptr, bool* r_had_previous_override = nullptr, String* r_previous_override = nullptr, Error* r_error = nullptr);
+        void restore_module_source_override(const StringName& p_module_id, bool p_had_previous_override, const String& p_previous_override);
+
+        Error reload_modules(const Vector<StringName>& p_module_ids, Vector<StringName>* r_reloaded_modules = nullptr);
+        Error restore_reloaded_modules(const Vector<StringName>& p_module_ids);
+
+        bool has_module_source_override(const String& p_module_id) const;
+        bool get_module_source_override(const String& p_module_id, String& r_source) const;
 
         // request to reload a module,
         // will reload until next load.
@@ -491,6 +505,8 @@ namespace jsb
         // p_type is redundant (could retrieve from class registry with p_class_id), but it's faster to pass it directly
         // p_pointer must be 2-byte aligned (v8 requirement)
         NativeObjectID bind_pointer(NativeClassID p_class_id, NativeClassType::Type p_type, void* p_pointer, const v8::Local<v8::Object>& p_object, int p_external_rc, bool p_js_owned_non_ref = false, bool p_created_from_js = false);
+
+        void detach_godot_object(Object* p_object);
 
         // An optimized binder for Variant. All variant values are not registered in `env`, and completely managed by JS.
         // The real `p_class_id` of `p_pointer` is unnecessary as an input parameter since `Variant` is used as the underlying type for any `TStruct` (primitive type).

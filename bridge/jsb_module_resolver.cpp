@@ -757,7 +757,8 @@ namespace jsb
     {
         // try .js
         const String js_path = internal::PathUtil::extends_with(p_module_id, "." JSB_JAVASCRIPT_EXT);
-        if (FileAccess::exists(js_path)
+        if ((p_env && p_env->has_module_source_override(js_path))
+            || FileAccess::exists(js_path)
 #if JSB_WITH_WEB
             || is_web_host_require_candidate(p_env, js_path)
 #endif
@@ -769,7 +770,8 @@ namespace jsb
 
         // try .cjs
         const String cjs_path = internal::PathUtil::extends_with(p_module_id, "." JSB_COMMONJS_EXT);
-        if (FileAccess::exists(cjs_path)
+        if ((p_env && p_env->has_module_source_override(cjs_path))
+            || FileAccess::exists(cjs_path)
 #if JSB_WITH_WEB
             || is_web_host_require_candidate(p_env, cjs_path)
 #endif
@@ -781,7 +783,8 @@ namespace jsb
 
         // try .mjs
         const String mjs_path = internal::PathUtil::extends_with(p_module_id, "." JSB_MODULE_EXT);
-        if (FileAccess::exists(mjs_path)
+        if ((p_env && p_env->has_module_source_override(mjs_path))
+            || FileAccess::exists(mjs_path)
 #if JSB_WITH_WEB
             || is_web_host_require_candidate(p_env, mjs_path)
 #endif
@@ -793,7 +796,8 @@ namespace jsb
 
         // try .json
         const String json_path = internal::PathUtil::extends_with(p_module_id, "." JSB_JSON_EXT);
-        if (FileAccess::exists(json_path)
+        if ((p_env && p_env->has_module_source_override(json_path))
+            || FileAccess::exists(json_path)
 #if JSB_WITH_WEB
             || is_web_host_require_candidate(p_env, json_path)
 #endif
@@ -944,7 +948,8 @@ namespace jsb
             || p_module_id.ends_with("." JSB_JSON_EXT);
 
         if (has_known_source_extension &&
-            (FileAccess::exists(p_module_id)
+            ((p_env && p_env->has_module_source_override(p_module_id))
+            || FileAccess::exists(p_module_id)
 #if JSB_WITH_WEB
             || is_web_host_require_candidate(p_env, p_module_id)
 #endif
@@ -1093,7 +1098,8 @@ namespace jsb
             return false;
         }
 
-        if (!FileAccess::exists(extracted_path)
+        if (!(p_env && p_env->has_module_source_override(extracted_path))
+            && !FileAccess::exists(extracted_path)
 #if JSB_WITH_WEB
             && !is_web_host_require_candidate(p_env, extracted_path)
 #endif
@@ -1201,6 +1207,12 @@ namespace jsb
 
     bool DefaultModuleResolver::load(Environment* p_env, const String& p_asset_path, JavaScriptModule& p_module)
     {
+        String source_override;
+        if (p_env && p_env->get_module_source_override(p_asset_path, source_override))
+        {
+            internal::StringSourceReader reader(p_asset_path, p_asset_path, source_override);
+            return load(p_env, p_asset_path, reader, p_module);
+        }
 #if JSB_WITH_WEB
         if (!FileAccess::exists(p_asset_path) && is_web_host_require_candidate(p_env, p_asset_path))
         {
@@ -1220,8 +1232,11 @@ namespace jsb
         }
 
 #if JSB_SUPPORT_RELOAD && defined(TOOLS_ENABLED)
-        p_module.time_modified = p_reader.get_time_modified();
-        p_module.hash = p_reader.get_hash();
+        if (!p_env || !p_env->has_module_source_override(p_asset_path))
+        {
+            p_module.time_modified = p_reader.get_time_modified();
+            p_module.hash = p_reader.get_hash();
+        }
 #endif
 
         // parse as JSON

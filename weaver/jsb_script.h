@@ -13,6 +13,14 @@ class GodotJSScript : public Script
 
     GDCLASS(GodotJSScript, Script)
 
+public:
+    struct HotReloadInstanceState
+    {
+        ObjectID owner_id;
+        List<Pair<StringName, Variant>> properties;
+        std::shared_ptr<jsb::Environment> env;
+    };
+
 private:
     bool loaded_ = false;
 
@@ -43,7 +51,7 @@ private:
     jsb::StatelessScriptClassInfo script_class_info_;
 
 private:
-    void load_module_immediately();
+    void load_module_immediately(const Vector<HotReloadInstanceState>* p_recreate_state = nullptr);
     jsb_force_inline void ensure_module_loaded() const { if (jsb_unlikely(!loaded_)) const_cast<GodotJSScript*>(this)->load_module_immediately(); }
     jsb_force_inline bool _is_valid() const { return jsb::internal::VariantUtil::is_valid_name(script_class_info_.module_id); }
 
@@ -62,13 +70,13 @@ public:
     Error load_source_code(const String &p_path);
     void load_module_if_missing();
 
-    // Called by GodotJSScriptLanguage::scan_external_changes() when env detected
-    // any module reload. Re-fetches the module from env (which holds the new
-    // exports), updates script_class_info_, and rebinds live instances via the
-    // existing load_module_immediately() rebind loop. Emits Script::changed so
-    // the editor inspector + scene tree pick up new exported properties without
-    // a manual click-off/click-on.
-    void force_reload_for_scan();
+    // Called by GodotJSScriptLanguage::scan_external_changes() around dirty
+    // module reload. Recreate-mode state is captured before modules execute;
+    // force_reload_for_scan() runs after env reload to refresh metadata and
+    // either recreate instances or opt-in prototype-rebind them.
+    bool uses_prototype_hot_reload() const { return script_class_info_.uses_prototype_hot_reload(); }
+    void capture_hot_reload_state(Vector<HotReloadInstanceState>& r_state) const;
+    void force_reload_for_scan(const Vector<HotReloadInstanceState>* p_recreate_state = nullptr);
 
     // Creates a ScriptInstance (for an existing Godot native object) and associates the ScriptInstance with an existing JS object (instance of the script's JS class).
     ScriptInstance* instance_create(const v8::Local<v8::Object>& p_this, Object* p_owner, bool p_is_temp_allowed);

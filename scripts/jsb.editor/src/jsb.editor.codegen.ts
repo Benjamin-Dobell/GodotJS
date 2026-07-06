@@ -1520,6 +1520,20 @@ const annotation_types = {
                             ],
                         },
                     },
+                    hotReload: {
+                        type: DescriptorType.FunctionLiteral,
+                        parameters: [{ name: "policy", type: { type: DescriptorType.Godot, name: "HotReload" } }],
+                        returns: {
+                            type: DescriptorType.FunctionLiteral,
+                            parameters: [
+                                { name: "target", type: { type: DescriptorType.Godot, name: "GObjectConstructor" } },
+                                {
+                                    name: "_context",
+                                    type: { type: DescriptorType.Godot, name: "ClassDecoratorContext" },
+                                },
+                            ],
+                        },
+                    },
                     export: {
                         type: DescriptorType.Intersection,
                         types: [

@@ -262,12 +262,6 @@ Error GodotJSScript::reload(bool p_keep_state)
         }
     }
 
-    if (!p_keep_state)
-    {
-        //TODO discard the object and crossbind again, but for now we just reload it normally
-    }
-
-    // (common situation) preserve the object and change its prototype
     const StringName& module_id = script_class_info_.module_id;
     jsb::JSEnvironment env(get_path(), true);
 
@@ -588,10 +582,20 @@ void GodotJSScript::load_module_if_missing()
     load_module_immediately();
 }
 
-void GodotJSScript::load_module_immediately()
+void GodotJSScript::load_module_immediately(const Vector<HotReloadInstanceState>* p_recreate_state)
 {
     if (loaded_) return;
     JSB_BENCHMARK_SCOPE(GodotJSScript, load_module);
+
+    Vector<HotReloadInstanceState> fallback_recreate_state;
+    if (!p_recreate_state && _is_valid())
+    {
+        capture_hot_reload_state(fallback_recreate_state);
+        if (!fallback_recreate_state.is_empty())
+        {
+            p_recreate_state = &fallback_recreate_state;
+        }
+    }
 
     const String path = jsb::internal::PathUtil::convert_typescript_path(get_path());
     jsb::JSEnvironment env(get_path(), true);
@@ -625,10 +629,44 @@ void GodotJSScript::load_module_immediately()
     if (_is_valid())
     {
         JSB_LOG(VeryVerbose, "GodotJSScript module loaded %s", path);
+        if (p_recreate_state && !uses_prototype_hot_reload())
         {
-            //TODO a dirty but approaching solution for hot-reloading
-            //TODO will crash if reloading script instances in worker threads
-            MutexLock lock(GodotJSScriptLanguage::get_singleton()->mutex_); // necessary?
+            for (const HotReloadInstanceState& state : *p_recreate_state)
+            {
+                Object* obj = jsb::compat::ObjectDB::get_instance(state.owner_id);
+                if (!obj)
+                {
+                    continue;
+                }
+
+                ScriptInstance* old_instance = obj->get_script_instance();
+                if (!old_instance || old_instance->get_language() != GodotJSScriptLanguage::get_singleton() || old_instance->get_script().ptr() != this)
+                {
+                    continue;
+                }
+                if (state.env)
+                {
+                    state.env->detach_godot_object(obj);
+                }
+                obj->set_script_instance(nullptr);
+
+                ScriptInstance* new_instance = instance_construct(obj, true);
+                if (!new_instance)
+                {
+                    JSB_LOG(Warning, "Cannot recreate script instance %s (%s) on %s", script_class_info_.js_class_name, script_class_info_.module_id, obj->get_class_name());
+                    obj->set_script(Ref<Script>());
+                    continue;
+                }
+
+                for (const Pair<StringName, Variant>& pair : state.properties)
+                {
+                    new_instance->set(pair.first, pair.second);
+                }
+            }
+        }
+        else
+        {
+            MutexLock lock(GodotJSScriptLanguage::get_singleton()->mutex_);
             for (RBSet<Object *>::Element *E = instances_.front(); E;)
             {
                 RBSet<Object *>::Element *N = E->next();
@@ -645,7 +683,6 @@ void GodotJSScript::load_module_immediately()
                     JSB_LOG(Warning, "Cannot rebind class %s (%s) on %s, it requires a %s", script_class_info_.js_class_name, script_class_info_.module_id, obj->get_class_name(), env->get_script_class(module->script_class_id)->native_class_name);
                     obj->set_script(Ref<Script>());
                 }
-
                 E = N;
             }
         }
@@ -683,7 +720,50 @@ void GodotJSScript::load_module_immediately()
     JSB_LOG(Debug, "a stub script loaded which does not contain a GodotJS class %s", path);
 }
 
-void GodotJSScript::force_reload_for_scan()
+void GodotJSScript::capture_hot_reload_state(Vector<HotReloadInstanceState>& r_state) const
+{
+    Vector<Object*> owners;
+    {
+        MutexLock lock(GodotJSScriptLanguage::get_singleton()->mutex_);
+        for (RBSet<Object *>::Element *E = instances_.front(); E; E = E->next())
+        {
+            owners.push_back(E->get());
+        }
+    }
+
+    for (Object* owner : owners)
+    {
+        ScriptInstance* script_instance = owner ? owner->get_script_instance() : nullptr;
+        if (!script_instance || script_instance->get_language() != GodotJSScriptLanguage::get_singleton())
+        {
+            continue;
+        }
+        if (script_instance->get_script().ptr() != this)
+        {
+            continue;
+        }
+
+        GodotJSScriptInstanceBase* js_instance = static_cast<GodotJSScriptInstanceBase*>(script_instance);
+        std::shared_ptr<jsb::Environment> env;
+        if (!js_instance->is_shadow())
+        {
+            env = static_cast<GodotJSScriptInstance*>(js_instance)->env_;
+            if (!env || !env->is_caller_thread())
+            {
+                JSB_LOG(Warning, "Skipping hot reload state capture for %s on %s because its JS environment belongs to another thread", get_path(), owner->get_class_name());
+                continue;
+            }
+        }
+
+        HotReloadInstanceState state;
+        state.owner_id = owner->get_instance_id();
+        script_instance->get_property_state(state.properties);
+        state.env = env;
+        r_state.push_back(state);
+    }
+}
+
+void GodotJSScript::force_reload_for_scan(const Vector<HotReloadInstanceState>* p_recreate_state)
 {
     JSB_LOG(Verbose, "[reload] force_reload_for_scan %s loaded=%d valid=%d", get_path(), (int)loaded_, (int)_is_valid());
     // No live module yet — nothing to rebind. Next access will trigger
@@ -691,11 +771,10 @@ void GodotJSScript::force_reload_for_scan()
     if (!loaded_) return;
     if (!_is_valid()) return;
 
-    // Drop loaded_ so load_module_immediately re-runs the rebind loop. The
-    // env scan already re-executed any dirty sources, so this is mostly a
-    // prototype refresh against the env's freshly-evaluated module object.
+    // Drop loaded_ so load_module_immediately refreshes live instances using
+    // the newly parsed script hot-reload policy.
     loaded_ = false;
-    load_module_immediately();
+    load_module_immediately(p_recreate_state);
 
     // Tell anyone watching the script that exports / methods may have changed
     // (editor inspector, scene tree, doc tools).

@@ -185,6 +185,15 @@ namespace jsb
         };
     }
 
+    namespace ScriptHotReload
+    {
+        enum Type : uint8_t
+        {
+            Recreate = 0,
+            Prototype = 1,
+        };
+    }
+
     // exchange internal javascript class (object) information.
     struct StatelessScriptClassInfo
     {
@@ -214,12 +223,14 @@ namespace jsb
         HashMap<StringName, ScriptPropertyInfo> properties;
 
         ScriptClassFlags::Type flags = ScriptClassFlags::None;
+        ScriptHotReload::Type hot_reload = ScriptHotReload::Recreate;
 
         //TODO whether the internal class object alive or not
         jsb_force_inline bool is_valid() const { return true; }
 
         jsb_force_inline bool is_tool() const { return flags & ScriptClassFlags::Tool; }
         jsb_force_inline bool is_abstract() const { return flags & ScriptClassFlags::Abstract; }
+        jsb_force_inline bool uses_prototype_hot_reload() const { return hot_reload == ScriptHotReload::Prototype; }
     };
 
     struct ScriptClassInfo : StatelessScriptClassInfo

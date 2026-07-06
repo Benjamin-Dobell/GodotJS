@@ -122,6 +122,25 @@ namespace jsb
                 impl::Helper::to_string_opt(isolate, target->Get(context, jsb_name(environment, name))));
         }
 
+        // function set_script_hot_reload(constructor: GObjectConstructor, policy: number): void;
+        void _set_script_hot_reload(const v8::FunctionCallbackInfo<v8::Value>& info)
+        {
+            v8::Isolate* isolate = info.GetIsolate();
+            v8::HandleScope handle_scope(isolate);
+            v8::Local<v8::Context> context = isolate->GetCurrentContext();
+            if (info.Length() != 2 || !info[0]->IsObject() || !info[1]->IsUint32())
+            {
+                jsb_throw(isolate, "bad param");
+                return;
+            }
+            Environment* environment = Environment::wrap(isolate);
+            const v8::Local<v8::Object> target = info[0].As<v8::Object>();
+            target->Set(context, jsb_symbol(environment, ClassHotReload), info[1]).Check();
+            JSB_LOG(VeryVerbose, "script %s (hot_reload=%d)",
+                impl::Helper::to_string_opt(isolate, target->Get(context, jsb_name(environment, name))),
+                info[1].As<v8::Uint32>()->Value());
+        }
+
         template <typename Lambda>
         constexpr void _return_result(const v8::FunctionCallbackInfo<v8::Value>& info, Variant::Type type, Variant& identifier, Lambda get_result)
         {
@@ -500,14 +519,82 @@ namespace jsb
             // live instances rebound after the env reload. Fall back to env
             // alone if the language singleton isn't initialised (unusual,
             // headless-jsb-only builds).
-            if (GodotJSScriptLanguage* lang = GodotJSScriptLanguage::get_singleton())
+            if (GodotJSScriptLanguage* lang = GodotJSScriptLanguage::get_singleton();
+                Thread::is_main_thread() && lang->is_main_environment(env))
             {
                 lang->scan_external_changes();
             }
             else
             {
-                (void) env->scan_external_changes();
+                const Vector<StringName> dirty_modules = env->scan_external_changes();
+                const Error err = env->reload_modules(dirty_modules);
+                if (err != OK)
+                {
+                    impl::Helper::throw_error(info.GetIsolate(), jsb_format("failed to reload external changes: %s", jsb_ext_error_string(err)));
+                }
             }
+        }
+
+        void _replace_module_source(const v8::FunctionCallbackInfo<v8::Value>& info)
+        {
+            v8::Isolate* isolate = info.GetIsolate();
+            v8::HandleScope handle_scope(isolate);
+            const v8::Local<v8::Context> context = isolate->GetCurrentContext();
+            if (info.Length() != 2 || !info[0]->IsString() || !info[1]->IsString())
+            {
+                jsb_throw(isolate, "bad param");
+                return;
+            }
+
+            const String module_id = impl::Helper::to_string(isolate, info[0]);
+            const String source = impl::Helper::to_string(isolate, info[1]);
+            if (module_id.is_empty())
+            {
+                jsb_throw(isolate, "bad module_id");
+                return;
+            }
+
+            Environment* env = Environment::wrap(context);
+            Vector<StringName> dirty_modules;
+            Error err = OK;
+            if (GodotJSScriptLanguage* lang = GodotJSScriptLanguage::get_singleton();
+                Thread::is_main_thread() && lang->is_main_environment(env))
+            {
+                dirty_modules = lang->replace_module_source(module_id, source, &err);
+            }
+            else
+            {
+                StringName resolved_module_id;
+                bool had_previous_override = false;
+                String previous_override;
+                dirty_modules = env->replace_module_source(module_id, source, &resolved_module_id, &had_previous_override, &previous_override, &err);
+                if (err == OK)
+                {
+                    Vector<StringName> reloaded_modules;
+                    err = env->reload_modules(dirty_modules, &reloaded_modules);
+                    if (err != OK)
+                    {
+                        env->restore_module_source_override(resolved_module_id, had_previous_override, previous_override);
+                        const Error rollback_err = env->restore_reloaded_modules(reloaded_modules);
+                        if (rollback_err != OK)
+                        {
+                            JSB_LOG(Warning, "failed to roll back reloaded modules after source replacement failure: %s", jsb_ext_error_string(rollback_err));
+                        }
+                    }
+                }
+            }
+            if (err != OK)
+            {
+                impl::Helper::throw_error(isolate, jsb_format("failed to replace module source for %s: %s", module_id, jsb_ext_error_string(err)));
+                return;
+            }
+
+            const v8::Local<v8::Array> result = v8::Array::New(isolate, dirty_modules.size());
+            for (int i = 0; i < dirty_modules.size(); i++)
+            {
+                result->Set(context, i, impl::Helper::new_string(isolate, (String) dirty_modules[i])).Check();
+            }
+            info.GetReturnValue().Set(result);
         }
 
         void _add_module(const v8::FunctionCallbackInfo<v8::Value>& info)
@@ -627,12 +714,14 @@ namespace jsb
                 internal_obj->Set(context, impl::Helper::new_string_ascii(isolate, "find_module"), JSB_NEW_FUNCTION(context, _find_module, {})).Check();
                 internal_obj->Set(context, impl::Helper::new_string_ascii(isolate, "add_module"), JSB_NEW_FUNCTION(context, _add_module, {})).Check();
                 internal_obj->Set(context, impl::Helper::new_string_ascii(isolate, "scan_external_changes"), JSB_NEW_FUNCTION(context, _scan_external_changes, {})).Check();
+                internal_obj->Set(context, impl::Helper::new_string_ascii(isolate, "replace_module_source"), JSB_NEW_FUNCTION(context, _replace_module_source, {})).Check();
 
                 internal_obj->Set(context, impl::Helper::new_string_ascii(isolate, "add_script_signal"), JSB_NEW_FUNCTION(context, _add_script_signal, {})).Check();
                 internal_obj->Set(context, impl::Helper::new_string_ascii(isolate, "add_script_property"), JSB_NEW_FUNCTION(context, _add_script_property, {})).Check();
                 internal_obj->Set(context, impl::Helper::new_string_ascii(isolate, "add_script_ready"), JSB_NEW_FUNCTION(context, _add_script_ready, {})).Check();
                 internal_obj->Set(context, impl::Helper::new_string_ascii(isolate, "add_script_tool"), JSB_NEW_FUNCTION(context, _add_script_tool, {})).Check();
                 internal_obj->Set(context, impl::Helper::new_string_ascii(isolate, "add_script_icon"), JSB_NEW_FUNCTION(context, _add_script_icon, {})).Check();
+                internal_obj->Set(context, impl::Helper::new_string_ascii(isolate, "set_script_hot_reload"), JSB_NEW_FUNCTION(context, _set_script_hot_reload, {})).Check();
                 internal_obj->Set(context, impl::Helper::new_string_ascii(isolate, "add_script_rpc"), JSB_NEW_FUNCTION(context, _add_script_rpc, {})).Check();
                 internal_obj->Set(context, impl::Helper::new_string_ascii(isolate, "set_script_doc"), JSB_NEW_FUNCTION(context, _set_script_doc, {})).Check();
                 internal_obj->Set(context, impl::Helper::new_string_ascii(isolate, "notify_microtasks_run"), JSB_NEW_FUNCTION(context, _notify_microtasks_run, {})).Check();

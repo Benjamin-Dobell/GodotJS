@@ -1211,9 +1211,15 @@ declare module "jsb.editor.codegen" {
 }
 
 declare module "godot.annotations" {
+    export enum HotReload {
+        Recreate = 0,
+        Prototype = 1,
+    }
+
     type ClassBinder = (() => (target: GObjectConstructor, context: ClassDecoratorContext) => void) & {
         tool: () => (target: GObjectConstructor, _context: ClassDecoratorContext) => void;
         icon: (path: string) => (target: GObjectConstructor, _context: ClassDecoratorContext) => void;
+        hotReload: (policy: HotReload) => (target: GObjectConstructor, _context: ClassDecoratorContext) => void;
         export: ((type: Godot.Variant.Type, options?: ExportOptions) => ClassMemberDecorator) & {
             multiline: () => ClassMemberDecorator;
             range: (min: number, max: number, step: number, ...extra_hints: string[]) => ClassMemberDecorator;

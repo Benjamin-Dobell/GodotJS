@@ -12,6 +12,11 @@ type GObjectConstructor = abstract new (...args: any[]) => Godot.Object;
 
 type ClassSpecifier = VariantConstructor | Symbol | EnumPlaceholder | TypePairPlaceholder;
 
+export enum HotReload {
+    Recreate = 0,
+    Prototype = 1,
+}
+
 function legacy_decorators_check(context: undefined | string | DecoratorContext) {
     if (typeof context === "object") {
         throw new Error(
@@ -540,6 +545,15 @@ export function icon(path: string) {
 export const Icon = icon;
 
 /** @deprecated Use createClassBinder() instead. */
+export function hotReload(policy: HotReload) {
+    return function (target: any, name: undefined) {
+        legacy_decorators_check(name);
+
+        jsb.internal.set_script_hot_reload(target, policy);
+    };
+}
+
+/** @deprecated Use createClassBinder() instead. */
 export function deprecated(message?: string) {
     return function (target: any, name?: string) {
         legacy_decorators_check(name);
@@ -876,6 +890,11 @@ export function createClassBinder(): ClassBinder {
             icon(path: string) {
                 return function (target: GObjectConstructor, _context: ClassDecoratorContext) {
                     jsb.internal.add_script_icon(target, path);
+                };
+            },
+            hotReload(policy: HotReload) {
+                return function (target: GObjectConstructor, _context: ClassDecoratorContext) {
+                    jsb.internal.set_script_hot_reload(target, policy);
                 };
             },
 
