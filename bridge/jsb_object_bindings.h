@@ -13,6 +13,7 @@ namespace jsb
 
         static void _godot_object_free(const v8::FunctionCallbackInfo<v8::Value>& info);
         static void _godot_object_method(const v8::FunctionCallbackInfo<v8::Value>& info);
+        static void _godot_extension_method(const v8::FunctionCallbackInfo<v8::Value>& info);
         static void _godot_object_get2(const v8::FunctionCallbackInfo<v8::Value>& info);
         static void _godot_object_set2(const v8::FunctionCallbackInfo<v8::Value>& info);
         static void _godot_object_signal_get(const v8::FunctionCallbackInfo<v8::Value>& info);

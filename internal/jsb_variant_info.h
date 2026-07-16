@@ -64,13 +64,22 @@ namespace jsb::internal
         Vector<FConstructorVariantInfo> variants;
     };
 
+    struct FObjectMethodInfo
+    {
+        const MethodBind* method_bind = nullptr;
+        Variant::Type return_type = Variant::NIL;
+        Vector<Variant::Type> argument_types;
+    };
+
     struct FPropertyInfo2
     {
-        MethodBind* getter_func;
-        MethodBind* setter_func;
+        MethodBind* getter_func = nullptr;
+        MethodBind* setter_func = nullptr;
+        Variant::Type getter_return_type = Variant::NIL;
+        Variant::Type setter_value_type = Variant::NIL;
 
         // extra parameter at the first position for getter/setter (getter2/setter2)
-        int index;
+        int index = 0;
     };
 
     // necessary reflection info for JS func callback (transferred as index with info.Data)
@@ -88,10 +97,13 @@ namespace jsb::internal
         // properties of Variant types
         Vector<FGetSetInfo> getsets;
 
+        // GDExtension method types are cached from PropertyInfo because their
+        // MethodBind argument-type cache is not generated in release builds.
+        Vector<FObjectMethodInfo> extension_methods;
+
         // for godot properties which have an implicit (hidden) parameter for getter/setter calls
         Vector<FPropertyInfo2> properties2;
 
     };
 }
 #endif
-

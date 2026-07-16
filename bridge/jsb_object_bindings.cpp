@@ -18,6 +18,37 @@ namespace jsb
         return p_return_value.get_type();
     }
 
+    static Variant::Type get_declared_type(const MethodBind* p_method_bind, int p_argument, bool p_is_extension)
+    {
+        if (!p_is_extension)
+        {
+            return p_method_bind->get_argument_type(p_argument);
+        }
+
+        // GDExtension keeps PropertyInfo in release builds, but its duplicate
+        // MethodBind argument_types cache is generated only for debug builds.
+        return p_argument < 0
+            ? p_method_bind->get_return_info().type
+            : p_method_bind->get_argument_info(p_argument).type;
+    }
+
+    static int cache_extension_method(Environment* p_env, const MethodBind* p_method_bind)
+    {
+        internal::VariantInfoCollection& collection = p_env->get_variant_info_collection();
+        const int method_index = (int) collection.extension_methods.size();
+        collection.extension_methods.append({});
+
+        internal::FObjectMethodInfo& method_info = collection.extension_methods.write[method_index];
+        method_info.method_bind = p_method_bind;
+        method_info.return_type = p_method_bind->get_return_info().type;
+        method_info.argument_types.resize(p_method_bind->get_argument_count());
+        for (int index = 0; index < method_info.argument_types.size(); ++index)
+        {
+            method_info.argument_types.write[index] = p_method_bind->get_argument_info(index).type;
+        }
+        return method_index;
+    }
+
     NativeClassInfoPtr ObjectReflectBindingUtil::reflect_bind(Environment* p_env, const ClassDB::ClassInfo* p_class_info, NativeClassID* r_class_id)
     {
         v8::Isolate* isolate = p_env->get_isolate();
@@ -37,6 +68,7 @@ namespace jsb
 
             //NOTE all singleton object will overwrite the class itself in 'godot' module, so we need make all things defined on PrototypeTemplate.
             const bool is_singleton_class = Engine::get_singleton()->has_singleton(internal_class_name);
+            const bool is_extension_class = p_class_info->gdextension != nullptr;
             auto static_builder = is_singleton_class ? class_builder.Instance() : class_builder.Static();
 
 #if JSB_EXCLUDE_GETSET_METHODS
@@ -56,6 +88,15 @@ namespace jsb
                     internal::FPropertyInfo2 property_info2;
                     property_info2.getter_func = getset_info._getptr;
                     property_info2.setter_func = getset_info._setptr;
+                    if (getset_info._getptr)
+                    {
+                        property_info2.getter_return_type = get_declared_type(getset_info._getptr, -1, is_extension_class);
+                    }
+                    if (getset_info._setptr)
+                    {
+                        jsb_check(getset_info._setptr->get_argument_count() > 1);
+                        property_info2.setter_value_type = get_declared_type(getset_info._setptr, 1, is_extension_class);
+                    }
                     property_info2.index = pair.value.index;
                     p_env->get_variant_info_collection().properties2.append(property_info2);
 
@@ -67,9 +108,20 @@ namespace jsb
                 else
                 {
                     // not using `property_collection_` in this case due to lower memory cost
-                    class_builder.Instance().Property(property_name,
-                        getset_info._getptr ? _godot_object_method : nullptr, (void*) getset_info._getptr,
-                        getset_info._setptr ? _godot_object_method : nullptr, (void*) getset_info._setptr);
+                    if (is_extension_class)
+                    {
+                        const int getter_index = getset_info._getptr ? cache_extension_method(p_env, getset_info._getptr) : 0;
+                        const int setter_index = getset_info._setptr ? cache_extension_method(p_env, getset_info._setptr) : 0;
+                        class_builder.Instance().Property(property_name,
+                            getset_info._getptr ? _godot_extension_method : nullptr, getter_index,
+                            getset_info._setptr ? _godot_extension_method : nullptr, setter_index);
+                    }
+                    else
+                    {
+                        class_builder.Instance().Property(property_name,
+                            getset_info._getptr ? _godot_object_method : nullptr, (void*) getset_info._getptr,
+                            getset_info._setptr ? _godot_object_method : nullptr, (void*) getset_info._setptr);
+                    }
 
 #if JSB_EXCLUDE_GETSET_METHODS
                     if (internal::VariantUtil::is_valid_name(getset_info.getter)) omitted_methods.insert(getset_info.getter);
@@ -89,11 +141,25 @@ namespace jsb
 
                 if (method_bind->is_static())
                 {
-                    static_builder.Method(method_name, _godot_object_method, (void*) method_bind);
+                    if (is_extension_class)
+                    {
+                        static_builder.Method(method_name, _godot_extension_method, cache_extension_method(p_env, method_bind));
+                    }
+                    else
+                    {
+                        static_builder.Method(method_name, _godot_object_method, (void*) method_bind);
+                    }
                 }
                 else
                 {
-                    class_builder.Instance().Method(method_name, _godot_object_method, (void*) method_bind);
+                    if (is_extension_class)
+                    {
+                        class_builder.Instance().Method(method_name, _godot_extension_method, cache_extension_method(p_env, method_bind));
+                    }
+                    else
+                    {
+                        class_builder.Instance().Method(method_name, _godot_object_method, (void*) method_bind);
+                    }
                 }
             }
 
@@ -341,16 +407,19 @@ namespace jsb
         impl::Helper::throw_error(isolate, error_message);
     }
 
-    void ObjectReflectBindingUtil::_godot_object_method(const v8::FunctionCallbackInfo<v8::Value>& info)
+    static void call_godot_object_method(const v8::FunctionCallbackInfo<v8::Value>& info, const MethodBind* p_method_bind, int p_extension_method_index)
     {
-        jsb_check(info.Data()->IsExternal());
         v8::Isolate* isolate = info.GetIsolate();
         v8::Local<v8::Context> context = isolate->GetCurrentContext();
-        const MethodBind* method_bind = (MethodBind*) info.Data().As<v8::External>()->Value();
+        Environment* env = Environment::wrap(isolate);
+        const bool is_extension_method = p_extension_method_index >= 0;
+        const MethodBind* method_bind = is_extension_method
+            ? env->get_variant_info_collection().extension_methods[p_extension_method_index].method_bind
+            : p_method_bind;
         const int argc = info.Length();
 
         jsb_check(method_bind);
-        Environment::wrap(isolate)->check_internal_state();
+        env->check_internal_state();
         Object* gd_object = nullptr;
         if (!method_bind->is_static())
         {
@@ -365,6 +434,7 @@ namespace jsb
         // prepare argv
         const int method_argc = method_bind->get_argument_count();
         const bool method_is_vararg = method_bind->is_vararg();
+        jsb_check(!is_extension_method || env->get_variant_info_collection().extension_methods[p_extension_method_index].argument_types.size() == method_argc);
 
         if (!internal::VariantUtil::check_argc(method_is_vararg, argc, method_bind->get_default_argument_count(), method_argc))
         {
@@ -380,7 +450,9 @@ namespace jsb
             argv[index] = &args[index];
             const Variant::Type type = index >= method_argc
                 ? Variant::Type::NIL
-                : method_bind->get_argument_type(index);
+                : is_extension_method
+                    ? env->get_variant_info_collection().extension_methods[p_extension_method_index].argument_types[index]
+                    : method_bind->get_argument_type(index);
 
             const v8::Local<v8::Value>& argument = info[index];
 
@@ -415,7 +487,10 @@ namespace jsb
             return;
         }
         v8::Local<v8::Value> jrval;
-        const Variant::Type return_type = sanitize_return_type(method_bind->get_argument_type(-1), crval);
+        const Variant::Type metadata_return_type = is_extension_method
+            ? env->get_variant_info_collection().extension_methods[p_extension_method_index].return_type
+            : method_bind->get_argument_type(-1);
+        const Variant::Type return_type = sanitize_return_type(metadata_return_type, crval);
         jsb_check(return_type == method_bind->get_return_info().type);
         if (TypeConvert::gd_var_to_js(isolate, context, crval, return_type, jrval))
         {
@@ -430,13 +505,26 @@ namespace jsb
         impl::Helper::throw_error(isolate, error_message);
     }
 
+    void ObjectReflectBindingUtil::_godot_object_method(const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        jsb_check(info.Data()->IsExternal());
+        const MethodBind* method_bind = (MethodBind*) info.Data().As<v8::External>()->Value();
+        call_godot_object_method(info, method_bind, -1);
+    }
+
+    void ObjectReflectBindingUtil::_godot_extension_method(const v8::FunctionCallbackInfo<v8::Value>& info)
+    {
+        jsb_check(info.Data()->IsInt32());
+        call_godot_object_method(info, nullptr, info.Data().As<v8::Int32>()->Value());
+    }
+
     void ObjectReflectBindingUtil::_godot_object_get2(const v8::FunctionCallbackInfo<v8::Value>& info)
     {
         jsb_check(info.Data()->IsInt32());
         v8::Isolate* isolate = info.GetIsolate();
         Environment* env = Environment::wrap(isolate);
         const v8::Local<v8::Context> context = isolate->GetCurrentContext();
-        const internal::FPropertyInfo2& property_info = env->get_variant_info_collection().properties2[info.Data().As<v8::Int32>()->Value()];
+        const internal::FPropertyInfo2 property_info = env->get_variant_info_collection().properties2[info.Data().As<v8::Int32>()->Value()];
         env->check_internal_state();
         // prepare argv
         if (info.Length() != 0)
@@ -468,7 +556,7 @@ namespace jsb
             return;
         }
         v8::Local<v8::Value> jrval;
-        const Variant::Type return_type = sanitize_return_type(property_info.getter_func->get_argument_type(-1), crval);
+        const Variant::Type return_type = sanitize_return_type(property_info.getter_return_type, crval);
         jsb_check(return_type == property_info.getter_func->get_return_info().type);
         if (TypeConvert::gd_var_to_js(isolate, context, crval, return_type, jrval))
         {
@@ -486,7 +574,7 @@ namespace jsb
         v8::Isolate* isolate = info.GetIsolate();
         Environment* env = Environment::wrap(isolate);
         const v8::Local<v8::Context> context = isolate->GetCurrentContext();
-        const internal::FPropertyInfo2& property_info = env->get_variant_info_collection().properties2[info.Data().As<v8::Int32>()->Value()];
+        const internal::FPropertyInfo2 property_info = env->get_variant_info_collection().properties2[info.Data().As<v8::Int32>()->Value()];
         env->check_internal_state();
         // prepare argv
         if (info.Length() != 1)
@@ -505,11 +593,11 @@ namespace jsb
         }
 
         Variant cvar;
-        if (!TypeConvert::js_to_gd_var(isolate, context, info[0], property_info.setter_func->get_argument_type(1), cvar))
+        if (!TypeConvert::js_to_gd_var(isolate, context, info[0], property_info.setter_value_type, cvar))
         {
             const String error_message = jsb_errorf("Failed to set property: %s. Unable to convert provided JS %s to Godot %s",
                 property_info.setter_func->get_name(), TypeConvert::js_debug_typeof(isolate, info[0]),
-                Variant::get_type_name(property_info.setter_func->get_argument_type(1)));
+                Variant::get_type_name(property_info.setter_value_type));
             impl::Helper::throw_error(isolate, error_message);
             return;
         }
