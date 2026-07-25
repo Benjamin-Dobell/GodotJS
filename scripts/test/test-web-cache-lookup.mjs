@@ -319,6 +319,58 @@ functionCache.clear();
 assert.equal(engine.handles.count, baselineHandleCount, "cache cleanup must release every durable key");
 assert.equal(profiler.snapshot(0).counters.handle_reset, 4);
 
+const functionChurnCycles = 4096;
+const functionChurnHashBase = 0x40000000;
+const longFunctionCache = new HeterogeneousHandleCache(true);
+const longFunctionCacheBaseline = engine.handles.count;
+
+assert.equal(profiler.reset(0), true);
+for (let cycle = 0; cycle < functionChurnCycles; ++cycle) {
+    const churnedFunction = function churnedFunction() {};
+    const sameHashFunction = function sameHashFunction() {};
+    const forcedHash = functionChurnHashBase + cycle;
+    engine._identity_hashes.set(churnedFunction, forcedHash);
+    engine._identity_hashes.set(sameHashFunction, forcedHash);
+
+    const churnedEntry = longFunctionCache.insert(churnedFunction);
+    assert.equal(
+        engine.handles.count,
+        longFunctionCacheBaseline + 1,
+        `cycle ${cycle}: one weakened durable function handle must occupy the cache`,
+    );
+    assert.equal(
+        longFunctionCache.find(churnedFunction),
+        churnedEntry,
+        `cycle ${cycle}: the exact function identity must hit`,
+    );
+    assert.equal(
+        longFunctionCache.find(sameHashFunction),
+        undefined,
+        `cycle ${cycle}: strict identity must reject a same-hash function`,
+    );
+
+    longFunctionCache.clear();
+    assert.equal(
+        engine.handles.count,
+        longFunctionCacheBaseline,
+        `cycle ${cycle}: releasing the function must restore handle occupancy`,
+    );
+    assert.equal(longFunctionCache.entries.length, 0, `cycle ${cycle}: released entries must not accumulate`);
+    assert.equal(longFunctionCache.buckets.size, 0, `cycle ${cycle}: released buckets must not accumulate`);
+}
+
+const churnSnapshot = profiler.snapshot(0);
+assert.equal(engine.handles.count, longFunctionCacheBaseline, "long function churn must finish at baseline occupancy");
+assert.equal(churnSnapshot.counters.handle_new, functionChurnCycles);
+assert.equal(churnSnapshot.counters.handle_set_weak, functionChurnCycles);
+assert.equal(churnSnapshot.counters.handle_reset, functionChurnCycles);
+assert.equal(churnSnapshot.counters.identity_hash, functionChurnCycles * 3);
+assert.equal(churnSnapshot.counters.handle_get, functionChurnCycles * 2);
+assert.equal(churnSnapshot.counters.handle_equals, 0);
+assert.equal(churnSnapshot.counters.scope_enter, functionChurnCycles * 3);
+assert.equal(churnSnapshot.counters.scope_exit, functionChurnCycles * 3);
+assert.equal(churnSnapshot.counters.stack_push, functionChurnCycles * 5);
+
 bridge.jsbi_FreeEngine(0);
 
 console.log("GodotJS Web heterogeneous cache lookup test: PASS");
