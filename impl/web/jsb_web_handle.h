@@ -200,6 +200,11 @@ namespace v8
                     jsbi_handle_Reset(jsb::impl::Broker::get_engine(isolate_), value_);
                     break;
                 }
+            case WeakType::kWeak:
+                {
+                    jsbi_handle_Reset(jsb::impl::Broker::get_engine(isolate_), value_);
+                    break;
+                }
             case WeakType::kWeakCallback:
                 {
                     // clear callback
