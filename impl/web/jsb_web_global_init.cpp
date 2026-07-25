@@ -21,7 +21,6 @@
 
 JSNATIVE_API EMSCRIPTEN_KEEPALIVE void jsni_unhandled_rejection(v8::Isolate* isolate, v8::PromiseRejectCallback cb, jsb::impl::StackPosition promise_sp, jsb::impl::StackPosition reason_sp)
 {
-    v8::HandleScope handle_scope(isolate);
     const v8::PromiseRejectMessage message(isolate,
         v8::kPromiseRejectWithNoHandler,
         promise_sp,
