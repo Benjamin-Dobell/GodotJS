@@ -293,6 +293,7 @@ namespace jsb
         static void constructor(const v8::FunctionCallbackInfo<v8::Value>& info)
         {
             v8::Isolate* isolate = info.GetIsolate();
+            impl::WebBridgeProfileScope web_profile_scope(isolate, impl::WebBridgeOperation::ClassConstruction);
             const internal::Index32 class_id(info.Data().As<v8::Uint32>()->Value());
 
             jsb_checkf(info.IsConstructCall(), "call constructor as a regular function is not allowed");

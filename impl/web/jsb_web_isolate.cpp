@@ -57,4 +57,14 @@ namespace v8
         return Local<Context>(Data(this, 0));
     }
 
+    uint32_t Isolate::enter_web_bridge_profile_operation(uint32_t p_operation)
+    {
+        return jsbi_WebBridgeProfileOperationEnter(rt_, p_operation);
+    }
+
+    void Isolate::exit_web_bridge_profile_operation(uint32_t p_operation, uint32_t p_generation)
+    {
+        jsbi_WebBridgeProfileOperationExit(rt_, p_operation, p_generation);
+    }
+
 }

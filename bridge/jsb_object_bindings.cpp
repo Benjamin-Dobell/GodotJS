@@ -234,6 +234,7 @@ namespace jsb
     void ObjectReflectBindingUtil::_godot_object_signal_get(const v8::FunctionCallbackInfo<v8::Value>& info)
     {
         v8::Isolate* isolate = info.GetIsolate();
+        impl::WebBridgeProfileScope web_profile_scope(isolate, impl::WebBridgeOperation::GodotSignalGet);
         const v8::Local<v8::Context> context = isolate->GetCurrentContext();
 
         Environment* environment = Environment::wrap(isolate);
@@ -355,6 +356,7 @@ namespace jsb
     void ObjectReflectBindingUtil::_godot_utility_func(const v8::FunctionCallbackInfo<v8::Value>& info)
     {
         v8::Isolate* isolate = info.GetIsolate();
+        impl::WebBridgeProfileScope web_profile_scope(isolate, impl::WebBridgeOperation::GodotUtilityCall);
         const v8::Local<v8::Context> context = isolate->GetCurrentContext();
         const internal::FUtilityMethodInfo& method_info = Environment::wrap(context)->get_variant_info_collection().utility_funcs[info.Data().As<v8::Int32>()->Value()];
         const int argc = info.Length();
@@ -410,6 +412,7 @@ namespace jsb
     static void call_godot_object_method(const v8::FunctionCallbackInfo<v8::Value>& info, const MethodBind* p_method_bind, int p_extension_method_index)
     {
         v8::Isolate* isolate = info.GetIsolate();
+        impl::WebBridgeProfileScope web_profile_scope(isolate, impl::WebBridgeOperation::GodotMethodCall);
         v8::Local<v8::Context> context = isolate->GetCurrentContext();
         Environment* env = Environment::wrap(isolate);
         const bool is_extension_method = p_extension_method_index >= 0;
@@ -522,6 +525,7 @@ namespace jsb
     {
         jsb_check(info.Data()->IsInt32());
         v8::Isolate* isolate = info.GetIsolate();
+        impl::WebBridgeProfileScope web_profile_scope(isolate, impl::WebBridgeOperation::GodotPropertyGet);
         Environment* env = Environment::wrap(isolate);
         const v8::Local<v8::Context> context = isolate->GetCurrentContext();
         const internal::FPropertyInfo2 property_info = env->get_variant_info_collection().properties2[info.Data().As<v8::Int32>()->Value()];
@@ -572,6 +576,7 @@ namespace jsb
     {
         jsb_check(info.Data()->IsInt32());
         v8::Isolate* isolate = info.GetIsolate();
+        impl::WebBridgeProfileScope web_profile_scope(isolate, impl::WebBridgeOperation::GodotPropertySet);
         Environment* env = Environment::wrap(isolate);
         const v8::Local<v8::Context> context = isolate->GetCurrentContext();
         const internal::FPropertyInfo2 property_info = env->get_variant_info_collection().properties2[info.Data().As<v8::Int32>()->Value()];

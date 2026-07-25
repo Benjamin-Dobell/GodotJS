@@ -56,6 +56,7 @@ JSBROWSER_API void jsbi_init(
     jsb::impl::FunctionPointer on_worker_message,
     jsb::impl::FunctionPointer on_worker_message_from_pthread,
     jsb::impl::FunctionPointer worker_get_or_add_native_transfer,
+    jsb::impl::FunctionPointer set_web_bridge_profile_enabled,
     bool debug_build,
     bool bridge_logging);
 
@@ -68,6 +69,8 @@ JSBROWSER_API void jsbi_error(const char* ptr);
 JSBROWSER_API void jsbi_free(void* ptr);
 JSBROWSER_API void jsbi_debugbreak();
 JSBROWSER_API void jsbi_GetStatistics(jsb::impl::JSRuntime engine_id, void* ptr);
+JSBROWSER_API uint32_t jsbi_WebBridgeProfileOperationEnter(jsb::impl::JSRuntime engine_id, uint32_t operation);
+JSBROWSER_API void jsbi_WebBridgeProfileOperationExit(jsb::impl::JSRuntime engine_id, uint32_t operation, uint32_t generation);
 
 JSBROWSER_API jsb::impl::StackPosition jsbi_CompileFunctionSource(jsb::impl::JSRuntime engine_id, const char* id, const char* source);
 JSBROWSER_API jsb::impl::StackPosition jsbi_Eval(jsb::impl::JSRuntime engine_id, const char* id, const char* source);

@@ -25,6 +25,7 @@ interface InteropProtocol {
     on_worker_message(data_sp: StackPosition, transfer_id: number): void;
     on_worker_message_from_pthread(sender_pthread_id: number, data_sp: StackPosition, transfer_id: number): void;
     worker_get_or_add_native_transfer(pthread_id: number, engine_opaque: IntPtr, transfer_id: number, value_sp: StackPosition): number;
+    set_web_bridge_profile_enabled(engine_opaque: IntPtr, enabled: boolean): void;
 }
 
 type InitOptions = Record<keyof InteropProtocol, number> & {
@@ -118,6 +119,353 @@ const jsbb_PropertyFilter = {
     SKIP_STRINGS: 8,
     SKIP_SYMBOLS: 16
 };
+
+const jsbb_WebBridgeProfileVersion = 1;
+const jsbb_WebBridgeProfileMaxOperationDepth = 16;
+
+const enum jsbb_WebBridgeOperation {
+    None = 0,
+    FunctionCache,
+    StringNameCache,
+    JavaScriptCall,
+    GodotMethodCall,
+    GodotPropertyGet,
+    GodotPropertySet,
+    GodotSignalGet,
+    GodotUtilityCall,
+    JSToGodotVariant,
+    GodotToJSVariant,
+    JSToGodotObject,
+    GodotToJSObject,
+    ValueWrapperConstruction,
+    ClassConstruction,
+    Overflow,
+    Num,
+}
+
+const jsbb_WebBridgeOperationNames = [
+    "none",
+    "function_cache",
+    "string_name_cache",
+    "javascript_call",
+    "godot_method_call",
+    "godot_property_get",
+    "godot_property_set",
+    "godot_signal_get",
+    "godot_utility_call",
+    "js_to_godot_variant",
+    "godot_to_js_variant",
+    "js_to_godot_object",
+    "godot_to_js_object",
+    "value_wrapper_construction",
+    "class_construction",
+    "overflow",
+] as const;
+
+enum jsbb_WebBridgeCounter {
+    StackGet,
+    StackSet,
+    StackPush,
+    ScopeEnter,
+    ScopeExit,
+    HandleNew,
+    HandleReset,
+    HandleGet,
+    HandleIsValid,
+    HandleSetWeak,
+    HandleSetStrong,
+    HandleCollected,
+    HandleEquals,
+    RegistryAdd,
+    RegistryFinalize,
+    IdentityHash,
+    IdentityHashZero,
+    GetOpaque,
+    PropertyGet,
+    PropertyGetAtom,
+    PropertyGetIndex,
+    PropertySet,
+    PropertySetIndex,
+    PropertyDefine,
+    PropertyDefineLazy,
+    PropertyOwnNames,
+    PropertyDescriptor,
+    PropertyHasOwn,
+    PrototypeGet,
+    PrototypeSet,
+    Call,
+    Construct,
+    CallbackFunction,
+    CallbackAccessor,
+    CallbackConstructor,
+    CallbackArguments,
+    NewInstance,
+    NewObject,
+    TypeIsNullish,
+    TypeIsNull,
+    TypeIsUndefined,
+    TypeIsExternal,
+    TypeIsObject,
+    TypeIsSymbol,
+    TypeIsString,
+    TypeIsFunction,
+    TypeIsBoolean,
+    TypeIsNumber,
+    TypeIsBigInt,
+    TypeIsInt32,
+    TypeIsUint32,
+    TypeIsPromise,
+    TypeIsArray,
+    TypeIsMap,
+    TypeIsSet,
+    TypeIsArrayBuffer,
+    ValueToString,
+    ValueToCString,
+    CStringBytes,
+    ValueNumber,
+    ValueBoolean,
+    ValueInt32,
+    ValueUint32,
+    ValueInt64,
+    StringNew,
+    StringBytes,
+    ArrayBufferRead,
+    ArrayBufferReadBytes,
+    ArrayBufferWrite,
+    ArrayBufferWriteBytes,
+    OperationEnter,
+    OperationExit,
+    OperationInvalidTag,
+    OperationOverflow,
+    OperationUnderflow,
+    OperationMismatch,
+    OperationStaleExit,
+    Num,
+}
+
+const jsbb_WebBridgeCounterNames = [
+    "stack_get",
+    "stack_set",
+    "stack_push",
+    "scope_enter",
+    "scope_exit",
+    "handle_new",
+    "handle_reset",
+    "handle_get",
+    "handle_is_valid",
+    "handle_set_weak",
+    "handle_set_strong",
+    "handle_collected",
+    "handle_equals",
+    "registry_add",
+    "registry_finalize",
+    "identity_hash",
+    "identity_hash_zero",
+    "get_opaque",
+    "property_get",
+    "property_get_atom",
+    "property_get_index",
+    "property_set",
+    "property_set_index",
+    "property_define",
+    "property_define_lazy",
+    "property_own_names",
+    "property_descriptor",
+    "property_has_own",
+    "prototype_get",
+    "prototype_set",
+    "call",
+    "construct",
+    "callback_function",
+    "callback_accessor",
+    "callback_constructor",
+    "callback_arguments",
+    "new_instance",
+    "new_object",
+    "type_is_nullish",
+    "type_is_null",
+    "type_is_undefined",
+    "type_is_external",
+    "type_is_object",
+    "type_is_symbol",
+    "type_is_string",
+    "type_is_function",
+    "type_is_boolean",
+    "type_is_number",
+    "type_is_bigint",
+    "type_is_int32",
+    "type_is_uint32",
+    "type_is_promise",
+    "type_is_array",
+    "type_is_map",
+    "type_is_set",
+    "type_is_array_buffer",
+    "value_to_string",
+    "value_to_cstring",
+    "cstring_bytes",
+    "value_number",
+    "value_boolean",
+    "value_int32",
+    "value_uint32",
+    "value_int64",
+    "string_new",
+    "string_bytes",
+    "array_buffer_read",
+    "array_buffer_read_bytes",
+    "array_buffer_write",
+    "array_buffer_write_bytes",
+    "operation_enter",
+    "operation_exit",
+    "operation_invalid_tag",
+    "operation_overflow",
+    "operation_underflow",
+    "operation_mismatch",
+    "operation_stale_exit",
+] as const;
+
+interface jsbb_WebBridgeProfileSnapshot {
+    version: number;
+    enabled: boolean;
+    counter_names: ReadonlyArray<string>;
+    operation_names: ReadonlyArray<string>;
+    counters?: Record<string, number>;
+    by_operation?: Record<string, Record<string, number>>;
+    gauges?: {
+        stack_position: number;
+        stack_depth: number;
+        peak_stack_position: number;
+        peak_stack_depth: number;
+        handle_count: number;
+        highest_handle_id: number;
+        handle_holes: number;
+        registered_object_count: number;
+        operation_depth: number;
+        peak_operation_depth: number;
+    };
+}
+
+interface jsbb_WebBridgeProfileGauges {
+    stack_position: number;
+    stack_depth: number;
+    handle_count: number;
+    highest_handle_id: number;
+    handle_holes: number;
+    registered_object_count: number;
+}
+
+class jsbb_WebBridgeProfileState {
+    private readonly counters = new Float64Array(jsbb_WebBridgeCounter.Num);
+    private readonly counters_by_operation = new Float64Array(jsbb_WebBridgeOperation.Num * jsbb_WebBridgeCounter.Num);
+    private readonly operation_stack = new Uint8Array(jsbb_WebBridgeProfileMaxOperationDepth);
+    private operation_depth = 0;
+    private peak_operation_depth = 0;
+    private peak_stack_position = 0;
+    private peak_stack_depth = 0;
+    private generation: number;
+
+    constructor(generation: number) {
+        this.generation = generation;
+    }
+
+    Increment(counter: jsbb_WebBridgeCounter, amount = 1): void {
+        this.counters[counter] += amount;
+        const operation = this.operation_depth > jsbb_WebBridgeProfileMaxOperationDepth
+            ? jsbb_WebBridgeOperation.Overflow
+            : this.operation_depth === 0
+                ? jsbb_WebBridgeOperation.None
+                : this.operation_stack[this.operation_depth - 1];
+        this.counters_by_operation[(operation * jsbb_WebBridgeCounter.Num) + counter] += amount;
+    }
+
+    ObserveStack(position: number, depth: number): void {
+        this.peak_stack_position = Math.max(this.peak_stack_position, position);
+        this.peak_stack_depth = Math.max(this.peak_stack_depth, depth);
+    }
+
+    EnterOperation(operation: number): number {
+        if (!Number.isInteger(operation) || operation <= jsbb_WebBridgeOperation.None || operation >= jsbb_WebBridgeOperation.Num) {
+            this.Increment(jsbb_WebBridgeCounter.OperationInvalidTag);
+            return 0;
+        }
+
+        this.Increment(jsbb_WebBridgeCounter.OperationEnter);
+        if (this.operation_depth < jsbb_WebBridgeProfileMaxOperationDepth) {
+            this.operation_stack[this.operation_depth] = operation;
+        } else {
+            this.Increment(jsbb_WebBridgeCounter.OperationOverflow);
+        }
+        ++this.operation_depth;
+        this.peak_operation_depth = Math.max(this.peak_operation_depth, this.operation_depth);
+        return this.generation;
+    }
+
+    ExitOperation(operation: number, generation: number): void {
+        if (generation !== this.generation) {
+            this.Increment(jsbb_WebBridgeCounter.OperationStaleExit);
+            return;
+        }
+
+        this.Increment(jsbb_WebBridgeCounter.OperationExit);
+        if (this.operation_depth === 0) {
+            this.Increment(jsbb_WebBridgeCounter.OperationUnderflow);
+            return;
+        }
+
+        --this.operation_depth;
+        if (this.operation_depth < jsbb_WebBridgeProfileMaxOperationDepth
+            && this.operation_stack[this.operation_depth] !== operation
+        ) {
+            this.Increment(jsbb_WebBridgeCounter.OperationMismatch);
+        }
+    }
+
+    Reset(generation: number): void {
+        this.counters.fill(0);
+        this.counters_by_operation.fill(0);
+        this.operation_stack.fill(0);
+        this.operation_depth = 0;
+        this.peak_operation_depth = 0;
+        this.peak_stack_position = 0;
+        this.peak_stack_depth = 0;
+        this.generation = generation;
+    }
+
+    Snapshot(gauges: jsbb_WebBridgeProfileGauges): jsbb_WebBridgeProfileSnapshot {
+        const counters: Record<string, number> = {};
+        const by_operation: Record<string, Record<string, number>> = {};
+
+        for (let counter = 0; counter < jsbb_WebBridgeCounter.Num; ++counter) {
+            counters[jsbb_WebBridgeCounterNames[counter]] = this.counters[counter];
+        }
+
+        for (let operation = 0; operation < jsbb_WebBridgeOperation.Num; ++operation) {
+            const operation_counters: Record<string, number> = {};
+            for (let counter = 0; counter < jsbb_WebBridgeCounter.Num; ++counter) {
+                const value = this.counters_by_operation[(operation * jsbb_WebBridgeCounter.Num) + counter];
+                if (value !== 0) {
+                    operation_counters[jsbb_WebBridgeCounterNames[counter]] = value;
+                }
+            }
+            by_operation[jsbb_WebBridgeOperationNames[operation]] = operation_counters;
+        }
+
+        return {
+            version: jsbb_WebBridgeProfileVersion,
+            enabled: true,
+            counter_names: [...jsbb_WebBridgeCounterNames],
+            operation_names: [...jsbb_WebBridgeOperationNames],
+            counters,
+            by_operation,
+            gauges: {
+                ...gauges,
+                peak_stack_position: this.peak_stack_position,
+                peak_stack_depth: this.peak_stack_depth,
+                operation_depth: this.operation_depth,
+                peak_operation_depth: this.peak_operation_depth,
+            },
+        };
+    }
+}
 
 interface jsbb_TransferMarker {
     __jsb_type: "transfer";
@@ -220,6 +568,7 @@ class jsbb_Stack<T> {
     private frames: Array<number> = [];
     private values: Array<T> = [];
     private _depth = 0;
+    private _profile: jsbb_WebBridgeProfileState | undefined;
 
     /** stack used */
     get pos() { return this.values.length; }
@@ -227,7 +576,13 @@ class jsbb_Stack<T> {
     /** depth of scope entered */
     get depth() { return this._depth; }
 
+    SetProfile(profile: jsbb_WebBridgeProfileState | undefined): void {
+        this._profile = profile;
+        profile?.ObserveStack(this.values.length, this._depth);
+    }
+
     SetValue(pos: StackPosition, value: T): void {
+        this._profile?.Increment(jsbb_WebBridgeCounter.StackSet);
         if (pos < 0 || pos >= this.values.length) {
             throw new RangeError("invalid stack position");
         }
@@ -236,6 +591,7 @@ class jsbb_Stack<T> {
 
     // get frame value
     GetValue(pos: StackPosition): T {
+        this._profile?.Increment(jsbb_WebBridgeCounter.StackGet);
         if (pos < 0 || pos >= this.values.length) {
             throw new RangeError("invalid stack position");
         }
@@ -244,18 +600,24 @@ class jsbb_Stack<T> {
 
     // return stack offset
     Push(val: T): StackPosition {
+        this._profile?.Increment(jsbb_WebBridgeCounter.StackPush);
         if (this.values.length >= jsbb_kMaxStackSize) {
             jsbb_console.warn("stack overflow", this.values.length);
         }
-        return this.values.push(val) - 1;
+        const position = this.values.push(val) - 1;
+        this._profile?.ObserveStack(this.values.length, this._depth);
+        return position;
     }
 
     EnterScope(): void {
+        this._profile?.Increment(jsbb_WebBridgeCounter.ScopeEnter);
         ++this._depth;
         this.frames.push(this.values.length);
+        this._profile?.ObserveStack(this.values.length, this._depth);
     }
 
     ExitScope(): void {
+        this._profile?.Increment(jsbb_WebBridgeCounter.ScopeExit);
         --this._depth;
         const frame = this.frames.pop()!;
         this.values.length = frame;
@@ -275,15 +637,23 @@ class jsbb_Handles {
     private _idgen: number = 0;
     private _count = 0;
     private _handles: Array<jsbb_HandleEntry | undefined> = [];
+    private _profile: jsbb_WebBridgeProfileState | undefined;
 
     get count() { return this._count; }
+    get highest_id() { return this._idgen === 0 ? -1 : this._idgen - 1; }
+    get holes() { return this._idgen - this._count; }
 
     constructor() {
         this._handles[999] = undefined;
     }
 
+    SetProfile(profile: jsbb_WebBridgeProfileState | undefined): void {
+        this._profile = profile;
+    }
+
     // trace an object (it's strongly referenced by default)
     AddValue(o: any) {
+        this._profile?.Increment(jsbb_WebBridgeCounter.HandleNew);
         if (!jsbb_IsTraceable(o)) {
             o = new jsbb_Wrapper(o);
         }
@@ -298,6 +668,7 @@ class jsbb_Handles {
     }
 
     IsValid(handle_id: GlobalID): boolean {
+        this._profile?.Increment(jsbb_WebBridgeCounter.HandleIsValid);
         const handle = this._handles[handle_id];
         if (typeof handle === "undefined") {
             return false;
@@ -310,11 +681,13 @@ class jsbb_Handles {
         jsbb_console.trace("obsolete handle", handle_id);
         delete this._handles[handle_id];
         --this._count;
+        this._profile?.Increment(jsbb_WebBridgeCounter.HandleCollected);
         return false;
     }
 
     // unsafe, must ensure a valid index by yourself
     Remove(handle_id: GlobalID) {
+        this._profile?.Increment(jsbb_WebBridgeCounter.HandleReset);
         if (typeof this._handles[handle_id] === "undefined") {
             return;
         }
@@ -324,6 +697,7 @@ class jsbb_Handles {
 
     // return the original target object in registry
     GetValue(handle_id: number): any {
+        this._profile?.Increment(jsbb_WebBridgeCounter.HandleGet);
         const handle = this._handles[handle_id];
         if (typeof handle === "undefined") {
             jsbb_console.warn("invalid handle id", handle_id);
@@ -337,6 +711,7 @@ class jsbb_Handles {
     }
 
     SetWeak(handle_id: number) {
+        this._profile?.Increment(jsbb_WebBridgeCounter.HandleSetWeak);
         const handle = this._handles[handle_id];
         if (typeof handle === "undefined") {
             jsbb_console.warn("invalid handle id", handle_id);
@@ -346,6 +721,7 @@ class jsbb_Handles {
     }
 
     SetStrong(handle_id: number) {
+        this._profile?.Increment(jsbb_WebBridgeCounter.HandleSetStrong);
         const handle = this._handles[handle_id];
         if (typeof handle === "undefined") {
             jsbb_console.warn("invalid handle id", handle_id);
@@ -359,6 +735,7 @@ class jsbb_Registry {
     private _count = 0;
     private engine_opaque: Pointer;
     private watcher: FinalizationRegistry<FinalizationRegistryCallbackInfo>;
+    private _profile: jsbb_WebBridgeProfileState | undefined;
 
     get count() { return this._count; }
 
@@ -366,13 +743,19 @@ class jsbb_Registry {
         const self = this;
         this.engine_opaque = engine_opaque;
         this.watcher = new FinalizationRegistry(function (internal_data) {
+            self._profile?.Increment(jsbb_WebBridgeCounter.RegistryFinalize);
             jsbb_console.trace("gc.dealloc", internal_data);
             --self._count;
             _jsbb_.interop.gc_callback(self.engine_opaque, internal_data);
         });
     }
 
+    SetProfile(profile: jsbb_WebBridgeProfileState | undefined): void {
+        this._profile = profile;
+    }
+
     Add(obj: any, internal_data: Pointer): void {
+        this._profile?.Increment(jsbb_WebBridgeCounter.RegistryAdd);
         jsbb_console.trace("gc.alloc", internal_data);
 
         // opaque saved in obj[opaque.symbol] for GetOpaque(), it's never changed.
@@ -404,12 +787,86 @@ class jsbb_Engine {
     private _atoms: Array<string>;
 
     private _opaque: IntPtr = 0;
+    private _profile: jsbb_WebBridgeProfileState | undefined;
+    private _profile_generation = 0;
 
     get stack() { return this._stack; }
 
     get handles() { return this._handles; }
 
     get opaque() { return this._opaque; }
+
+    private NextProfileGeneration(): number {
+        this._profile_generation = (this._profile_generation + 1) >>> 0;
+        if (this._profile_generation === 0) {
+            this._profile_generation = 1;
+        }
+        return this._profile_generation;
+    }
+
+    SetWebBridgeProfileEnabled(enabled: boolean): boolean {
+        if (enabled === (this._profile !== undefined)) {
+            return true;
+        }
+
+        if (enabled) {
+            const profile = new jsbb_WebBridgeProfileState(this.NextProfileGeneration());
+            this._profile = profile;
+            this._stack.SetProfile(profile);
+            this._handles.SetProfile(profile);
+            this._registry.SetProfile(profile);
+            _jsbb_.interop.set_web_bridge_profile_enabled(this._opaque, true);
+            return true;
+        }
+
+        _jsbb_.interop.set_web_bridge_profile_enabled(this._opaque, false);
+        this._stack.SetProfile(undefined);
+        this._handles.SetProfile(undefined);
+        this._registry.SetProfile(undefined);
+        this._profile = undefined;
+        this.NextProfileGeneration();
+        return true;
+    }
+
+    ResetWebBridgeProfile(): boolean {
+        if (!this._profile) {
+            return false;
+        }
+        this._profile.Reset(this.NextProfileGeneration());
+        return true;
+    }
+
+    WebBridgeProfileOperationEnter(operation: number): number {
+        return this._profile?.EnterOperation(operation) ?? 0;
+    }
+
+    WebBridgeProfileOperationExit(operation: number, generation: number): void {
+        this._profile?.ExitOperation(operation, generation);
+    }
+
+    CountWebBridgeOperation(counter: jsbb_WebBridgeCounter, amount = 1): void {
+        this._profile?.Increment(counter, amount);
+    }
+
+    GetWebBridgeProfileSnapshot(): jsbb_WebBridgeProfileSnapshot {
+        if (!this._profile) {
+            return {
+                version: jsbb_WebBridgeProfileVersion,
+                enabled: false,
+                counter_names: [...jsbb_WebBridgeCounterNames],
+                operation_names: [...jsbb_WebBridgeOperationNames],
+            };
+        }
+
+        return this._profile.Snapshot({
+            stack_position: this._stack.pos,
+            stack_depth: this._stack.depth,
+            handle_count: this._handles.count,
+            highest_handle_id: this._handles.highest_id,
+            handle_holes: this._handles.holes,
+            registered_object_count: this._registry.count,
+        });
+    }
 
     /** If calling from C++ side, use `_throw(err)` to raise an error instead of `throw`. */
     private _throw(value: any) {
@@ -466,6 +923,9 @@ class jsbb_Engine {
     }
 
     Release() {
+        if (this._profile) {
+            this.SetWebBridgeProfileEnabled(false);
+        }
         // this._global = <any>undefined;
         this._handles = <any>undefined;
         this._stack = <any>undefined;
@@ -533,18 +993,42 @@ class jsbb_Engine {
     // must return a stable hash for value.
     // 0 is OK but introduce additional strict_eq evaluation.
     GetIdentityHash(stack_pos: StackPosition) {
+        this._profile?.Increment(jsbb_WebBridgeCounter.IdentityHash);
         const val = this._stack.GetValue(stack_pos);
-        if (typeof val === "undefined" || val === null) return 0;
-        if (typeof val === "number") return jsbb_Engine.GetNumberHash(val);
-        if (typeof val === "boolean") return val ? 1 : 0;
-        if (typeof val === "string") return jsbb_Engine.GetStringHash(val);
-        if (typeof val === "bigint") return jsbb_Engine.GetStringHash(val.toString());
+        if (typeof val === "undefined" || val === null) {
+            this._profile?.Increment(jsbb_WebBridgeCounter.IdentityHashZero);
+            return 0;
+        }
+        if (typeof val === "number") {
+            const hash = jsbb_Engine.GetNumberHash(val);
+            if (hash === 0) this._profile?.Increment(jsbb_WebBridgeCounter.IdentityHashZero);
+            return hash;
+        }
+        if (typeof val === "boolean") {
+            if (!val) this._profile?.Increment(jsbb_WebBridgeCounter.IdentityHashZero);
+            return val ? 1 : 0;
+        }
+        if (typeof val === "string") {
+            const hash = jsbb_Engine.GetStringHash(val);
+            if (hash === 0) this._profile?.Increment(jsbb_WebBridgeCounter.IdentityHashZero);
+            return hash;
+        }
+        if (typeof val === "bigint") {
+            const hash = jsbb_Engine.GetStringHash(val.toString());
+            if (hash === 0) this._profile?.Increment(jsbb_WebBridgeCounter.IdentityHashZero);
+            return hash;
+        }
         // if (typeof val === "function")
         // if (typeof val === "object")
         // if (typeof val === "symbol")
 
         // internal data index as hash since it's never changed
-        if (typeof val[jsbb_opaque] !== "undefined") return val[jsbb_opaque] | 0;
+        if (typeof val[jsbb_opaque] !== "undefined") {
+            const hash = val[jsbb_opaque] | 0;
+            if (hash === 0) this._profile?.Increment(jsbb_WebBridgeCounter.IdentityHashZero);
+            return hash;
+        }
+        this._profile?.Increment(jsbb_WebBridgeCounter.IdentityHashZero);
         return 0;
     }
 
@@ -558,6 +1042,7 @@ class jsbb_Engine {
 
     /** copy the data of a buffer at stack_pos into HEAP at `data_dst`  */
     ReadArrayBufferData(stack_pos: StackPosition, size: number, data_dst: Pointer): ResultValue {
+        this._profile?.Increment(jsbb_WebBridgeCounter.ArrayBufferRead);
         const val = this._stack.GetValue(stack_pos);
         if (val instanceof ArrayBuffer) {
             if (val.byteLength < size) {
@@ -565,6 +1050,7 @@ class jsbb_Engine {
                 return -1;
             }
             _jsbb_.u8.set(new Uint8Array(val), data_dst);
+            this._profile?.Increment(jsbb_WebBridgeCounter.ArrayBufferReadBytes, size);
             return 1;
         }
         jsbb_console.error("ReadArrayBufferData: not an ArrayBuffer");
@@ -572,6 +1058,8 @@ class jsbb_Engine {
     }
 
     NewArrayBuffer(data_src: Pointer, size: number): StackPosition {
+        this._profile?.Increment(jsbb_WebBridgeCounter.ArrayBufferWrite);
+        this._profile?.Increment(jsbb_WebBridgeCounter.ArrayBufferWriteBytes, size);
         // make a copy of the memory from data_src with size
         const data = new Uint8Array(_jsbb_.u8.buffer, data_src, size).slice();
         return this._stack.Push(data.buffer);
@@ -607,9 +1095,11 @@ class jsbb_Engine {
      * @returns pointer the the buffer (HEAP)
      */
     ToCStringLen(o_size: Pointer, str_sp: StackPosition): Pointer {
+        this._profile?.Increment(jsbb_WebBridgeCounter.ValueToCString);
         const val = this._stack.GetValue(str_sp);
         const str = String(val);
         const len = _jsbb_.wasmop.lengthBytesUTF8(str);
+        this._profile?.Increment(jsbb_WebBridgeCounter.CStringBytes, len);
 
         _jsbb_.i32[o_size >> 2] = len;
         if (len <= 0) {
@@ -627,31 +1117,37 @@ class jsbb_Engine {
 
     /** push the given value as string on the stack */
     ToString(stack_pos: StackPosition): StackPosition {
+        this._profile?.Increment(jsbb_WebBridgeCounter.ValueToString);
         const val = this._stack.GetValue(stack_pos);
         return this._stack.Push(String(val));
     }
 
     NumberValue(stack_pos: StackPosition): number {
+        this._profile?.Increment(jsbb_WebBridgeCounter.ValueNumber);
         const val = this._stack.GetValue(stack_pos);
         return Number(val);
     }
 
     BooleanValue(stack_pos: StackPosition): boolean {
+        this._profile?.Increment(jsbb_WebBridgeCounter.ValueBoolean);
         const val = this._stack.GetValue(stack_pos);
         return Boolean(val);
     }
 
     Int32Value(stack_pos: StackPosition): number {
+        this._profile?.Increment(jsbb_WebBridgeCounter.ValueInt32);
         const val = this._stack.GetValue(stack_pos);
         return Number(val) | 0;
     }
 
     Uint32Value(stack_pos: StackPosition): number {
+        this._profile?.Increment(jsbb_WebBridgeCounter.ValueUint32);
         const val = this._stack.GetValue(stack_pos);
         return (Number(val) | 0) >>> 0;
     }
 
     Int64Value(stack_pos: StackPosition, o_value_ptr: Pointer): boolean {
+        this._profile?.Increment(jsbb_WebBridgeCounter.ValueInt64);
         const val = this._stack.GetValue(stack_pos);
         _jsbb_.i64[o_value_ptr >> 3] = val;
         return true;
@@ -681,6 +1177,7 @@ class jsbb_Engine {
     }
 
     GetOpaque(stack_pos: StackPosition): Pointer {
+        this._profile?.Increment(jsbb_WebBridgeCounter.GetOpaque);
         let obj = this._stack.GetValue(stack_pos);
         if (obj === null || typeof obj !== "object") {
             return 0;
@@ -690,6 +1187,8 @@ class jsbb_Engine {
     }
 
     NewString(cstr_ptr: CString, len: number): StackPosition {
+        this._profile?.Increment(jsbb_WebBridgeCounter.StringNew);
+        this._profile?.Increment(jsbb_WebBridgeCounter.StringBytes, len);
         if (len === 0) {
             return this._stack.Push("");
         }
@@ -795,6 +1294,7 @@ class jsbb_Engine {
     }
 
     IsSet(stack_pos: StackPosition): boolean {
+        this._profile?.Increment(jsbb_WebBridgeCounter.TypeIsSet);
         return this._stack.GetValue(stack_pos) instanceof Set;
     }
 
@@ -807,6 +1307,7 @@ class jsbb_Engine {
     }
 
     DefineProperty(obj_sp: StackPosition, key_sp: StackPosition, value_sp: StackPosition, get_sp: StackPosition, set_sp: StackPosition, flags: jsbb_PropertyFlags): ResultValue {
+        this._profile?.Increment(jsbb_WebBridgeCounter.PropertyDefine);
         try {
             const obj = this._stack.GetValue(obj_sp);
             const key = this._stack.GetValue(key_sp);
@@ -847,12 +1348,14 @@ class jsbb_Engine {
     }
 
     DefineLazyProperty(obj_sp: StackPosition, key_sp: StackPosition, cb: FunctionPointer): ResultValue {
+        this._profile?.Increment(jsbb_WebBridgeCounter.PropertyDefineLazy);
         const obj = this._stack.GetValue(obj_sp);
         const key = this._stack.GetValue(key_sp);
         const self = this;
 
         Object.defineProperty(obj, key, {
             "get": function () {
+                self._profile?.Increment(jsbb_WebBridgeCounter.CallbackAccessor);
                 self._stack.EnterScope();
 
                 // prepare: fixed initial call stack positions
@@ -893,6 +1396,7 @@ class jsbb_Engine {
     }
 
     SetProperty(obj_sp: StackPosition, key_sp: StackPosition, val_sp: StackPosition): ResultValue {
+        this._profile?.Increment(jsbb_WebBridgeCounter.PropertySet);
         try {
             const obj = this._stack.GetValue(obj_sp);
             const key = this._stack.GetValue(key_sp);
@@ -912,6 +1416,7 @@ class jsbb_Engine {
 
     //
     SetPropertyUint32(obj_sp: StackPosition, index: number, value_sp: StackPosition): ResultValue {
+        this._profile?.Increment(jsbb_WebBridgeCounter.PropertySetIndex);
         try {
             const obj = this._stack.GetValue(obj_sp);
             const val = this._stack.GetValue(value_sp);
@@ -926,6 +1431,7 @@ class jsbb_Engine {
 
     //TODO filter and key_conversion are not implemented (or not supported?)
     GetOwnPropertyNames(obj_sp: StackPosition, filter: number, key_conversion: number): StackPosition {
+        this._profile?.Increment(jsbb_WebBridgeCounter.PropertyOwnNames);
         try {
             const obj = this._stack.GetValue(obj_sp);
             const names = Object.getOwnPropertyNames(obj);
@@ -941,6 +1447,7 @@ class jsbb_Engine {
     }
 
     GetOwnPropertyDescriptor(obj_sp: StackPosition, key_sp: StackPosition) {
+        this._profile?.Increment(jsbb_WebBridgeCounter.PropertyDescriptor);
         try {
             const key = this._stack.GetValue(key_sp);
             const obj = this._stack.GetValue(obj_sp);
@@ -958,6 +1465,7 @@ class jsbb_Engine {
 
     /** get property value by atom_id (a cached string) */
     GetPropertyAtomID(obj_sp: StackPosition, atom_id: AtomID): StackPosition {
+        this._profile?.Increment(jsbb_WebBridgeCounter.PropertyGetAtom);
         const obj = this._stack.GetValue(obj_sp);
         const key = this._atoms[atom_id];
         if (typeof key !== "string") {
@@ -979,6 +1487,7 @@ class jsbb_Engine {
     }
 
     GetProperty(obj_sp: StackPosition, key_sp: StackPosition): StackPosition {
+        this._profile?.Increment(jsbb_WebBridgeCounter.PropertyGet);
         const obj = this._stack.GetValue(obj_sp);
         const key = this._stack.GetValue(key_sp);
         if (typeof key !== "string" && typeof key !== "symbol") {
@@ -1004,6 +1513,7 @@ class jsbb_Engine {
     }
 
     GetPropertyUint32(obj_sp: StackPosition, index: number): StackPosition {
+        this._profile?.Increment(jsbb_WebBridgeCounter.PropertyGetIndex);
         const obj = this._stack.GetValue(obj_sp);
         if (typeof index !== "number") {
             this._throw(new Error("invalid atom id"));
@@ -1113,6 +1623,7 @@ class jsbb_Engine {
     }
 
     Call(this_sp: StackPosition, func_sp: StackPosition, argc: number, argv: IntPtr): StackPosition {
+        this._profile?.Increment(jsbb_WebBridgeCounter.Call);
         jsbb_console.trace("Call", "this_sp", this_sp, "func_sp", func_sp, "argc", argc, "argv", argv);
 
         const thiz = this._stack.GetValue(this_sp);
@@ -1145,6 +1656,7 @@ class jsbb_Engine {
     }
 
     CallAsConstructor(func_sp: StackPosition, argc: number, argv: IntPtr): StackPosition {
+        this._profile?.Increment(jsbb_WebBridgeCounter.Construct);
         jsbb_console.trace("CallAsConstructor", func_sp, argc, argv);
 
         const func = this._stack.GetValue(func_sp);
@@ -1202,6 +1714,7 @@ class jsbb_Engine {
 
     // push `obj.__proto__` to stack
     GetPrototypeOf(obj_sp: StackPosition): StackPosition {
+        this._profile?.Increment(jsbb_WebBridgeCounter.PrototypeGet);
         try {
             const obj = this._stack.GetValue(obj_sp);
             return this._stack.Push(Object.getPrototypeOf(obj));
@@ -1212,6 +1725,7 @@ class jsbb_Engine {
     }
 
     SetPrototypeOf(obj_sp: StackPosition, proto_sp: StackPosition): ResultValue {
+        this._profile?.Increment(jsbb_WebBridgeCounter.PrototypeSet);
         try {
             const obj = this._stack.GetValue(obj_sp);
             const proto = this._stack.GetValue(proto_sp);
@@ -1228,6 +1742,7 @@ class jsbb_Engine {
     }
 
     HasOwnProperty(obj_sp: StackPosition, key_sp: StackPosition): ResultValue {
+        this._profile?.Increment(jsbb_WebBridgeCounter.PropertyHasOwn);
         try {
             const obj = this._stack.GetValue(obj_sp);
             const key = this._stack.GetValue(key_sp);
@@ -1271,6 +1786,8 @@ class jsbb_Engine {
                 return undefined;
             }
 
+            self._profile?.Increment(jsbb_WebBridgeCounter.CallbackFunction);
+            self._profile?.Increment(jsbb_WebBridgeCounter.CallbackArguments, arguments.length);
             const stack = self._stack;
             stack.EnterScope();
 
@@ -1324,6 +1841,8 @@ class jsbb_Engine {
         jsbb_console.trace("NewClass", class_name, cb, data);
 
         const ctor = function (this: any) {
+            self._profile?.Increment(jsbb_WebBridgeCounter.CallbackConstructor);
+            self._profile?.Increment(jsbb_WebBridgeCounter.CallbackArguments, arguments.length);
             jsbb_console.trace("new class", class_name);
             self._stack.EnterScope();
 
@@ -1371,6 +1890,7 @@ class jsbb_Engine {
 
     // simulate the behaviour of JS_NewObjectProtoClass
     NewInstance(proto_sp: StackPosition): StackPosition {
+        this._profile?.Increment(jsbb_WebBridgeCounter.NewInstance);
         try {
             const proto = this._stack.GetValue(proto_sp);
             const thiz = {};
@@ -1389,6 +1909,7 @@ class jsbb_Engine {
     }
 
     NewObject(): StackPosition {
+        this._profile?.Increment(jsbb_WebBridgeCounter.NewObject);
         return this._stack.Push({});
     }
 
@@ -1528,6 +2049,7 @@ class _jsbb_ {
                 on_worker_message: GodotRuntime.get_func(interop.on_worker_message),
                 on_worker_message_from_pthread: GodotRuntime.get_func(interop.on_worker_message_from_pthread),
                 worker_get_or_add_native_transfer: GodotRuntime.get_func(interop.worker_get_or_add_native_transfer),
+                set_web_bridge_profile_enabled: GodotRuntime.get_func(interop.set_web_bridge_profile_enabled),
             };
             this.wasmop = { UTF8ToString, stringToUTF8, lengthBytesUTF8, _malloc, _free };
             for (const key of Object.keys(this.interop) as Array<keyof InteropProtocol>) {
@@ -2251,8 +2773,20 @@ if (jsbb_is_pthread && typeof globalThis.addEventListener === "function") {
 }
 
 const jsbb_browser = globalThis;
+const jsbb_web_bridge_profile = Object.freeze({
+    "set_enabled": (engine_id: EngineID, enabled: boolean): boolean => {
+        return _jsbb_.GetEngine(engine_id)?.SetWebBridgeProfileEnabled(Boolean(enabled)) ?? false;
+    },
+    "reset": (engine_id: EngineID): boolean => {
+        return _jsbb_.GetEngine(engine_id)?.ResetWebBridgeProfile() ?? false;
+    },
+    "snapshot": (engine_id: EngineID): jsbb_WebBridgeProfileSnapshot | undefined => {
+        return _jsbb_.GetEngine(engine_id)?.GetWebBridgeProfileSnapshot();
+    },
+});
 const jsbb_host_require = typeof Module === "object" ? Module["__godotjs_host_require"] : undefined;
 if (typeof jsbb_host_require === "function") {
     (<any>jsbb_browser)["__godotjs_host_require"] = jsbb_host_require;
 }
+(<any>jsbb_browser)["GodotJSBridgeProfiler"] = jsbb_web_bridge_profile;
 (<any>jsbb_browser)["_jsbb_"] = _jsbb_;

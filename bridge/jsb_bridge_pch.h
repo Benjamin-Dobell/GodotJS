@@ -23,6 +23,7 @@
 #   error unknown javascript runtime
 #endif
 
+#include "../impl/shared/jsb_web_bridge_profile.h"
 #include "../internal/jsb_internal.h"
 
 #endif

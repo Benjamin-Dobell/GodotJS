@@ -7,6 +7,7 @@
     "build": "pnpm -r build",
     "test": "node scripts/test/run-runtime-matrix.mts",
     "test:skip-builds": "node scripts/test/run-runtime-matrix.mts --skip-builds",
+    "test:web-bridge-profile": "node scripts/test/test-web-bridge-profile.mjs",
     "build:web:commonjs-template": "scons -C ../.. platform=web target=template_release skip_js_runtime=yes threads=no dlink_enabled=no nodejs_runtime=yes",
     "export:web:commonjs": "node scripts/test/export-web-commonjs.js",
     "run:web:commonjs": "node scripts/test/run-web-commonjs-export-under-node.js",

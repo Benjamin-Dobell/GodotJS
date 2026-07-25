@@ -146,6 +146,7 @@ namespace jsb
     // translate js val into gd variant with an expected type
     bool TypeConvert::js_to_gd_var(v8::Isolate* isolate, const v8::Local<v8::Context>& context, const v8::Local<v8::Value>& p_jval, Variant::Type p_type, Variant& r_cvar)
     {
+        impl::WebBridgeProfileScope web_profile_scope(isolate, impl::WebBridgeOperation::JSToGodotVariant);
 #if JSB_WITH_V8
         if (p_jval->IsProxy())
 #else
@@ -306,6 +307,7 @@ namespace jsb
 
     bool TypeConvert::gd_var_to_js(v8::Isolate* isolate, const v8::Local<v8::Context>& context, const Variant& p_cvar, Variant::Type p_type, v8::Local<v8::Value>& r_jval)
     {
+        impl::WebBridgeProfileScope web_profile_scope(isolate, impl::WebBridgeOperation::GodotToJSVariant);
         switch (p_type)
         {
         case Variant::FLOAT:
@@ -393,6 +395,7 @@ namespace jsb
                 if (const NativeClassInfoPtr class_info = env->expose_godot_primitive_class(p_type, &class_id))
                 {
                     jsb_check(class_id && class_info->type == NativeClassType::GodotPrimitive);
+                    impl::WebBridgeProfileScope construction_profile_scope(isolate, impl::WebBridgeOperation::ValueWrapperConstruction);
                     r_jval = class_info->clazz.NewInstance(context);
                     const v8::Local<v8::Object> instance = r_jval.As<v8::Object>();
                     jsb_check(TypeConvert::is_variant(instance));
@@ -418,6 +421,7 @@ namespace jsb
 
     bool TypeConvert::gd_obj_to_js(v8::Isolate* isolate, const v8::Local<v8::Context>& context, Object* p_godot_obj, v8::Local<v8::Object>& r_jval)
     {
+        impl::WebBridgeProfileScope web_profile_scope(isolate, impl::WebBridgeOperation::GodotToJSObject);
         jsb_check(p_godot_obj);
         Environment* environment = Environment::wrap(isolate);
         if (environment->try_get_object(p_godot_obj, r_jval))
@@ -465,6 +469,7 @@ namespace jsb
 
     bool TypeConvert::js_to_gd_var(v8::Isolate* isolate, const v8::Local<v8::Context>& context, const v8::Local<v8::Value>& p_jval, Variant& r_cvar)
     {
+        impl::WebBridgeProfileScope web_profile_scope(isolate, impl::WebBridgeOperation::JSToGodotVariant);
         if (p_jval.IsEmpty() || p_jval->IsNullOrUndefined())
         {
             r_cvar = {};
@@ -658,6 +663,7 @@ namespace jsb
 
     bool TypeConvert::js_to_gd_obj(v8::Isolate* isolate, const v8::Local<v8::Context>& context, const v8::Local<v8::Value>& p_jval, Object*& r_godot_obj)
     {
+        impl::WebBridgeProfileScope web_profile_scope(isolate, impl::WebBridgeOperation::JSToGodotObject);
         if (!p_jval->IsObject())
         {
             return false;

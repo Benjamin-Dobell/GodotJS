@@ -144,6 +144,14 @@ JSNATIVE_API EMSCRIPTEN_KEEPALIVE int32_t jsni_worker_get_or_add_native_transfer
     return static_cast<int32_t>(transfer_index);
 }
 
+JSNATIVE_API EMSCRIPTEN_KEEPALIVE void jsni_set_web_bridge_profile_enabled(v8::Isolate* isolate, bool enabled)
+{
+    if (isolate)
+    {
+        isolate->set_web_bridge_profile_enabled(enabled);
+    }
+}
+
 // NOTE: jsni_bind_object, jsni_get_binding_type, jsni_clone_variant, jsni_restore_variant
 // were removed with the old JS-side walker. Web worker transfer handling now uses
 // JS-side extraction (`extract_message_variants`) plus native transfer queues.
@@ -203,6 +211,7 @@ namespace jsb::impl
                 JSNI_FUNC(on_worker_message),
                 JSNI_FUNC(on_worker_message_from_pthread),
                 JSNI_FUNC(worker_get_or_add_native_transfer),
+                JSNI_FUNC(set_web_bridge_profile_enabled),
                 CoreBind::OS::get_singleton()->is_debug_build(),
                 internal::Settings::is_bridge_logging_enabled());
         }

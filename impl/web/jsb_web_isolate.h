@@ -92,6 +92,11 @@ namespace v8
 
         jsb_force_inline jsb::impl::JSRuntime rt() const { return rt_; }
 
+        bool is_web_bridge_profile_enabled() const { return web_bridge_profile_enabled_; }
+        void set_web_bridge_profile_enabled(bool p_enabled) { web_bridge_profile_enabled_ = p_enabled; }
+        uint32_t enter_web_bridge_profile_operation(uint32_t p_operation);
+        void exit_web_bridge_profile_operation(uint32_t p_operation, uint32_t p_generation);
+
         jsb::impl::InternalDataConstPtr get_internal_data(const jsb::impl::InternalDataID index) const
         {
             return internal_data_.get_value_scoped(index);
@@ -148,6 +153,7 @@ namespace v8
 
         uint32_t ref_count_;
         bool disposed_;
+        bool web_bridge_profile_enabled_ = false;
         jsb::impl::JSRuntime rt_;
         HandleScope* handle_scope_;
 

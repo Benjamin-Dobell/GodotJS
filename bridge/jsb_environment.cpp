@@ -1553,6 +1553,7 @@ namespace jsb
     ObjectCacheID Environment::get_cached_function(const v8::Local<v8::Function>& p_func)
     {
         v8::Isolate* isolate = get_isolate();
+        impl::WebBridgeProfileScope web_profile_scope(isolate, impl::WebBridgeOperation::FunctionCache);
         const auto& it = function_refs_.find(TWeakRef(isolate, p_func));
         if (it != function_refs_.end())
         {
@@ -2438,6 +2439,7 @@ namespace jsb
 
     bool Environment::release_function(ObjectCacheID p_func_id)
     {
+        impl::WebBridgeProfileScope web_profile_scope(get_isolate(), impl::WebBridgeOperation::FunctionCache);
         this->check_internal_state();
         if (function_bank_.is_valid_index(p_func_id))
         {
@@ -2466,6 +2468,7 @@ namespace jsb
 
     Variant Environment::_call(v8::Isolate* isolate, const v8::Local<v8::Context>& context, const v8::Local<v8::Function>& p_func, const v8::Local<v8::Value>& p_self, const Variant** p_args, int p_argcount, Callable::CallError& r_error)
     {
+        impl::WebBridgeProfileScope web_profile_scope(isolate, impl::WebBridgeOperation::JavaScriptCall);
         using LocalValue = v8::Local<v8::Value>;
         LocalValue* argv = jsb_stackalloc(LocalValue, p_argcount);
         for (int index = 0; index < p_argcount; ++index)

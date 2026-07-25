@@ -3,7 +3,7 @@ const GodotJSBrowserInterface = {
     // $GodotJSBrowserInterface__deps: ['$GodotRuntime'],
     // $GodotJSBrowserInterface: {},
 
-    "jsbi_init": function (gc_callback, unhandled_rejection, call_function, call_accessor, generate_internal_data, on_worker_message, on_worker_message_from_pthread, worker_get_or_add_native_transfer, debug_build, bridge_logging) {
+    "jsbi_init": function (gc_callback, unhandled_rejection, call_function, call_accessor, generate_internal_data, on_worker_message, on_worker_message_from_pthread, worker_get_or_add_native_transfer, set_web_bridge_profile_enabled, debug_build, bridge_logging) {
         return _jsbb_.init({
             gc_callback,
             unhandled_rejection,
@@ -13,6 +13,7 @@ const GodotJSBrowserInterface = {
             on_worker_message,
             on_worker_message_from_pthread,
             worker_get_or_add_native_transfer,
+            set_web_bridge_profile_enabled,
             debug_build,
             bridge_logging
         });
@@ -26,6 +27,12 @@ const GodotJSBrowserInterface = {
     "jsbi_free": function (ptr) { _jsbb_.free(ptr); },
     "jsbi_debugbreak": function () { _jsbb_.debugbreak(); },
     "jsbi_GetStatistics": function (engine_id, data_ptr) { _jsbb_.GetEngine(engine_id).GetStatistics(data_ptr); },
+    "jsbi_WebBridgeProfileOperationEnter": function (engine_id, operation) {
+        return _jsbb_.GetEngine(engine_id).WebBridgeProfileOperationEnter(operation);
+    },
+    "jsbi_WebBridgeProfileOperationExit": function (engine_id, operation, generation) {
+        _jsbb_.GetEngine(engine_id).WebBridgeProfileOperationExit(operation, generation);
+    },
 
     "jsbi_CompileFunctionSource": function (engine_id, filename, src) { return _jsbb_.GetEngine(engine_id).CompileFunctionSource(filename, src); },
     "jsbi_Eval": function (engine_id, filename, src) { return _jsbb_.GetEngine(engine_id).Eval(filename, src); },
@@ -102,7 +109,9 @@ const GodotJSBrowserInterface = {
     },
 
     "jsbi_handle_eq": function (engine_id, val1, val2) {
-        const handles = _jsbb_.GetEngine(engine_id).handles;
+        const engine = _jsbb_.GetEngine(engine_id);
+        engine.CountWebBridgeOperation(jsbb_WebBridgeCounter.HandleEquals);
+        const handles = engine.handles;
         const v1 = handles.GetValue(val1);
         const v2 = handles.GetValue(val2);
         return v1 === v2;
@@ -121,42 +130,98 @@ const GodotJSBrowserInterface = {
     },
 
     "jsbi_IsNullOrUndefined": function (engine_id, stack_pos) {
-        const val = _jsbb_.GetEngine(engine_id).stack.GetValue(stack_pos);
+        const engine = _jsbb_.GetEngine(engine_id);
+        engine.CountWebBridgeOperation(jsbb_WebBridgeCounter.TypeIsNullish);
+        const val = engine.stack.GetValue(stack_pos);
         return val === null || val === undefined;
     },
-    "jsbi_IsNull": function (engine_id, stack_pos) { return _jsbb_.GetEngine(engine_id).stack.GetValue(stack_pos) === null; },
-    "jsbi_IsUndefined": function (engine_id, stack_pos) { return _jsbb_.GetEngine(engine_id).stack.GetValue(stack_pos) === undefined; },
-    "jsbi_IsExternal": function (engine_id, stack_pos) { return _jsbb_.GetEngine(engine_id).IsExternal(stack_pos); },
+    "jsbi_IsNull": function (engine_id, stack_pos) {
+        const engine = _jsbb_.GetEngine(engine_id);
+        engine.CountWebBridgeOperation(jsbb_WebBridgeCounter.TypeIsNull);
+        return engine.stack.GetValue(stack_pos) === null;
+    },
+    "jsbi_IsUndefined": function (engine_id, stack_pos) {
+        const engine = _jsbb_.GetEngine(engine_id);
+        engine.CountWebBridgeOperation(jsbb_WebBridgeCounter.TypeIsUndefined);
+        return engine.stack.GetValue(stack_pos) === undefined;
+    },
+    "jsbi_IsExternal": function (engine_id, stack_pos) {
+        const engine = _jsbb_.GetEngine(engine_id);
+        engine.CountWebBridgeOperation(jsbb_WebBridgeCounter.TypeIsExternal);
+        return engine.IsExternal(stack_pos);
+    },
     "jsbi_IsObject": function (engine_id, stack_pos) {
-        const val = _jsbb_.GetEngine(engine_id).stack.GetValue(stack_pos);
+        const engine = _jsbb_.GetEngine(engine_id);
+        engine.CountWebBridgeOperation(jsbb_WebBridgeCounter.TypeIsObject);
+        const val = engine.stack.GetValue(stack_pos);
         return _jsbb_.is_object(val);
     },
-    "jsbi_IsSymbol": function (engine_id, stack_pos) { return typeof _jsbb_.GetEngine(engine_id).stack.GetValue(stack_pos) === "symbol"; },
-    "jsbi_IsString": function (engine_id, stack_pos) { return typeof _jsbb_.GetEngine(engine_id).stack.GetValue(stack_pos) === "string"; },
-    "jsbi_IsFunction": function (engine_id, stack_pos) { return typeof _jsbb_.GetEngine(engine_id).stack.GetValue(stack_pos) === "function"; },
-    "jsbi_IsBoolean": function (engine_id, stack_pos) { return typeof _jsbb_.GetEngine(engine_id).stack.GetValue(stack_pos) === "boolean"; },
+    "jsbi_IsSymbol": function (engine_id, stack_pos) {
+        const engine = _jsbb_.GetEngine(engine_id);
+        engine.CountWebBridgeOperation(jsbb_WebBridgeCounter.TypeIsSymbol);
+        return typeof engine.stack.GetValue(stack_pos) === "symbol";
+    },
+    "jsbi_IsString": function (engine_id, stack_pos) {
+        const engine = _jsbb_.GetEngine(engine_id);
+        engine.CountWebBridgeOperation(jsbb_WebBridgeCounter.TypeIsString);
+        return typeof engine.stack.GetValue(stack_pos) === "string";
+    },
+    "jsbi_IsFunction": function (engine_id, stack_pos) {
+        const engine = _jsbb_.GetEngine(engine_id);
+        engine.CountWebBridgeOperation(jsbb_WebBridgeCounter.TypeIsFunction);
+        return typeof engine.stack.GetValue(stack_pos) === "function";
+    },
+    "jsbi_IsBoolean": function (engine_id, stack_pos) {
+        const engine = _jsbb_.GetEngine(engine_id);
+        engine.CountWebBridgeOperation(jsbb_WebBridgeCounter.TypeIsBoolean);
+        return typeof engine.stack.GetValue(stack_pos) === "boolean";
+    },
     "jsbi_IsNumber": function (engine_id, stack_pos) {
-        const val = _jsbb_.GetEngine(engine_id).stack.GetValue(stack_pos);
+        const engine = _jsbb_.GetEngine(engine_id);
+        engine.CountWebBridgeOperation(jsbb_WebBridgeCounter.TypeIsNumber);
+        const val = engine.stack.GetValue(stack_pos);
         return typeof val === "number";
     },
     "jsbi_IsBigInt": function (engine_id, stack_pos) {
-        const val = _jsbb_.GetEngine(engine_id).stack.GetValue(stack_pos);
+        const engine = _jsbb_.GetEngine(engine_id);
+        engine.CountWebBridgeOperation(jsbb_WebBridgeCounter.TypeIsBigInt);
+        const val = engine.stack.GetValue(stack_pos);
         return typeof val === "bigint";
     },
     "jsbi_IsInt32": function (engine_id, stack_pos) {
-        const val = _jsbb_.GetEngine(engine_id).stack.GetValue(stack_pos);
+        const engine = _jsbb_.GetEngine(engine_id);
+        engine.CountWebBridgeOperation(jsbb_WebBridgeCounter.TypeIsInt32);
+        const val = engine.stack.GetValue(stack_pos);
         return typeof val === "number" && Number.isInteger(val);
     },
     // not really supported
     "jsbi_IsUint32": function (engine_id, stack_pos) {
-        const val = _jsbb_.GetEngine(engine_id).stack.GetValue(stack_pos);
+        const engine = _jsbb_.GetEngine(engine_id);
+        engine.CountWebBridgeOperation(jsbb_WebBridgeCounter.TypeIsUint32);
+        const val = engine.stack.GetValue(stack_pos);
         return typeof val === "number" && Number.isInteger(val);
     },
 
-    "jsbi_IsPromise": function (engine_id, stack_pos) { return _jsbb_.GetEngine(engine_id).stack.GetValue(stack_pos) instanceof Promise; },
-    "jsbi_IsArray": function (engine_id, stack_pos) { return _jsbb_.GetEngine(engine_id).stack.GetValue(stack_pos) instanceof Array; },
-    "jsbi_IsMap": function (engine_id, stack_pos) { return _jsbb_.GetEngine(engine_id).stack.GetValue(stack_pos) instanceof Map; },
-    "jsbi_IsArrayBuffer": function (engine_id, stack_pos) { return _jsbb_.GetEngine(engine_id).stack.GetValue(stack_pos) instanceof ArrayBuffer; },
+    "jsbi_IsPromise": function (engine_id, stack_pos) {
+        const engine = _jsbb_.GetEngine(engine_id);
+        engine.CountWebBridgeOperation(jsbb_WebBridgeCounter.TypeIsPromise);
+        return engine.stack.GetValue(stack_pos) instanceof Promise;
+    },
+    "jsbi_IsArray": function (engine_id, stack_pos) {
+        const engine = _jsbb_.GetEngine(engine_id);
+        engine.CountWebBridgeOperation(jsbb_WebBridgeCounter.TypeIsArray);
+        return engine.stack.GetValue(stack_pos) instanceof Array;
+    },
+    "jsbi_IsMap": function (engine_id, stack_pos) {
+        const engine = _jsbb_.GetEngine(engine_id);
+        engine.CountWebBridgeOperation(jsbb_WebBridgeCounter.TypeIsMap);
+        return engine.stack.GetValue(stack_pos) instanceof Map;
+    },
+    "jsbi_IsArrayBuffer": function (engine_id, stack_pos) {
+        const engine = _jsbb_.GetEngine(engine_id);
+        engine.CountWebBridgeOperation(jsbb_WebBridgeCounter.TypeIsArrayBuffer);
+        return engine.stack.GetValue(stack_pos) instanceof ArrayBuffer;
+    },
 
     "jsbi_PostMessage": function (pthread_id, engine_id, data_sp, transfer_id, transfer_sp) { return _jsbb_.PostMessage(pthread_id, engine_id, data_sp, transfer_id, transfer_sp); },
     "jsbi_RegisterWorkerOwner": function (pthread_id, engine_id, worker_owner_sp) { return _jsbb_.RegisterWorkerOwner(pthread_id, engine_id, worker_owner_sp); },
