@@ -77,7 +77,10 @@ type GodotJSEmscriptenModule = {
 };
 
 const jsbb_is_pthread = typeof ENVIRONMENT_IS_PTHREAD !== "undefined" && ENVIRONMENT_IS_PTHREAD;
-const jsbb_pthread_runtime = typeof PThread !== "undefined" ? PThread : undefined;
+
+function getPThreadRuntime(): undefined | EmscriptenPThread {
+    return typeof PThread !== "undefined" ? PThread : undefined;
+}
 
 let JSWorkerParent: null | undefined | JSWorkerLike = jsbb_is_pthread ? undefined : null;
 
@@ -2095,6 +2098,7 @@ class _jsbb_ {
         this._i64 = <any>undefined;
         this._pending_worker_messages = [];
         this._worker_owner_cache_by_pthread = new Map<number, JSWorkerLike>();
+        JSWorkerParent = undefined;
     }
 
     static NewEngine(opaque: Pointer) {
@@ -2506,7 +2510,7 @@ class _jsbb_ {
 
     static post_message_to_worker(pthread_id: number, data: unknown, transfer_id?: number): boolean {
         try {
-            const worker = jsbb_pthread_runtime?.pthreads[pthread_id];
+            const worker = getPThreadRuntime()?.pthreads[pthread_id];
 
             if (!worker) {
                 return false;
@@ -2531,18 +2535,20 @@ class _jsbb_ {
     }
 
     private static install_pthread_worker_listener_hook(): void {
-        if (jsbb_is_pthread || !jsbb_pthread_runtime) {
+        const pthread_runtime = getPThreadRuntime();
+
+        if (jsbb_is_pthread || !pthread_runtime) {
             return;
         }
 
-        const original_get_new_worker = jsbb_pthread_runtime.getNewWorker;
+        const original_get_new_worker = pthread_runtime.getNewWorker;
 
         if (original_get_new_worker.__jsb_wrapped) {
             return;
         }
 
         const wrapped_get_new_worker: typeof original_get_new_worker = (() => {
-            const worker = original_get_new_worker.call(jsbb_pthread_runtime);
+            const worker = original_get_new_worker.call(pthread_runtime);
 
             if (worker) {
 				// Install our own message listener (in addition to what Emscripten puts in place)
@@ -2569,7 +2575,7 @@ class _jsbb_ {
         });
         wrapped_get_new_worker.__jsb_wrapped = true;
 
-        jsbb_pthread_runtime.getNewWorker = wrapped_get_new_worker;
+        pthread_runtime.getNewWorker = wrapped_get_new_worker;
     }
 
     private static dispatch_direct_worker_message(data: unknown, sender_pthread_id?: number): void {
