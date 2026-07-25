@@ -545,7 +545,7 @@ function jsbb_is_worker_message(value: unknown): value is WorkerMessage {
 
 function jsbb_IsTraceable(o: any): boolean {
     const type = typeof o;
-    return !(o !== null && type !== "function" && type !== "object");
+    return o !== null && (type === "function" || type === "object");
 }
 
 function jsbb_ensure(condition: boolean) {
