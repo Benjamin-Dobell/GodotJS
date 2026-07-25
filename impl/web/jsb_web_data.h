@@ -39,6 +39,7 @@ namespace v8
         bool IsInt32() const;
         bool IsUint32() const;
         bool IsNumber() const;
+        jsb::impl::WebNumericValueKind GetNumericValue(double& r_value) const;
         bool IsBigInt() const;
         bool IsExternal() const;
         bool IsArrayBuffer() const;

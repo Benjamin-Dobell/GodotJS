@@ -11,6 +11,7 @@
     "test:web-bound-object-conversion": "node scripts/test/test-web-bound-object-conversion.mjs",
     "test:web-cache-lookup": "node scripts/test/test-web-cache-lookup.mjs",
     "test:web-identity-hash": "node scripts/test/test-web-identity-hash.mjs",
+    "test:web-numeric-value": "node scripts/test/test-web-numeric-value.mjs",
     "test:web-weak-global-reset": "node scripts/test/test-web-weak-global-reset.mjs",
     "build:web:commonjs-template": "scons -C ../.. platform=web target=template_release skip_js_runtime=yes threads=no dlink_enabled=no nodejs_runtime=yes",
     "export:web:commonjs": "node scripts/test/export-web-commonjs.js",

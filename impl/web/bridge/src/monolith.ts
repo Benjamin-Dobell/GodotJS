@@ -42,6 +42,13 @@ enum jsbb_PropertyFlags {
     VALUE = 1 << 5,
 }
 
+const enum jsbb_NumericValueKind {
+    None,
+    Int32,
+    Number,
+    Num,
+}
+
 // FinalizationRegistry (ES2021):
 // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/FinalizationRegistry
 
@@ -123,7 +130,7 @@ const jsbb_PropertyFilter = {
     SKIP_SYMBOLS: 16
 };
 
-const jsbb_WebBridgeProfileVersion = 1;
+const jsbb_WebBridgeProfileVersion = 2;
 const jsbb_WebBridgeProfileMaxOperationDepth = 16;
 
 const enum jsbb_WebBridgeOperation {
@@ -225,6 +232,7 @@ enum jsbb_WebBridgeCounter {
     ValueToString,
     ValueToCString,
     CStringBytes,
+    ValueNumeric,
     ValueNumber,
     ValueBoolean,
     ValueInt32,
@@ -306,6 +314,7 @@ const jsbb_WebBridgeCounterNames = [
     "value_to_string",
     "value_to_cstring",
     "cstring_bytes",
+    "value_numeric",
     "value_number",
     "value_boolean",
     "value_int32",
@@ -1146,6 +1155,21 @@ class jsbb_Engine {
         this._profile?.Increment(jsbb_WebBridgeCounter.ValueToString);
         const val = this._stack.GetValue(stack_pos);
         return this._stack.Push(String(val));
+    }
+
+    GetNumericValue(stack_pos: StackPosition, o_kind_ptr: Pointer): number {
+        this._profile?.Increment(jsbb_WebBridgeCounter.ValueNumeric);
+        const val = this._stack.GetValue(stack_pos);
+        if (typeof val !== "number") {
+            _jsbb_.i32[o_kind_ptr >> 2] = jsbb_NumericValueKind.None;
+            return 0;
+        }
+        if (Number.isInteger(val)) {
+            _jsbb_.i32[o_kind_ptr >> 2] = jsbb_NumericValueKind.Int32;
+            return val | 0;
+        }
+        _jsbb_.i32[o_kind_ptr >> 2] = jsbb_NumericValueKind.Number;
+        return val;
     }
 
     NumberValue(stack_pos: StackPosition): number {

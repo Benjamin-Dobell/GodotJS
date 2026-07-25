@@ -79,6 +79,14 @@ namespace v8
         return jsbi_IsNumber(isolate_->rt(), stack_pos_);
     }
 
+    jsb::impl::WebNumericValueKind Data::GetNumericValue(double& r_value) const
+    {
+        int32_t kind = -1;
+        r_value = jsbi_GetNumericValue(isolate_->rt(), stack_pos_, &kind);
+        jsb_check(kind >= 0 && kind < (int32_t) jsb::impl::WebNumericValueKind::Num);
+        return (jsb::impl::WebNumericValueKind) kind;
+    }
+
     bool Data::IsExternal() const
     {
         return jsbi_IsExternal(isolate_->rt(), stack_pos_);

@@ -6,6 +6,14 @@
 
 namespace jsb::impl
 {
+    enum class WebNumericValueKind : int32_t
+    {
+        None,
+        Int32,
+        Number,
+        Num,
+    };
+
     // Offset positions based on the current scope
     //NOTE be cautious to always keep sync with NewCFunction in monolith.ts `NativeAPI.ccall(self._opaque, cb, rval_pos, argc);`
     namespace FunctionStackBase

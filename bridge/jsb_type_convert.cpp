@@ -480,6 +480,22 @@ namespace jsb
             r_cvar = p_jval.As<v8::Boolean>()->Value();
             return true;
         }
+#if JSB_WITH_WEB
+        double numeric_value;
+        switch (p_jval->GetNumericValue(numeric_value))
+        {
+        case impl::WebNumericValueKind::None: break;
+        case impl::WebNumericValueKind::Int32:
+            r_cvar = (int32_t) numeric_value;
+            return true;
+        case impl::WebNumericValueKind::Number:
+            r_cvar = numeric_value;
+            return true;
+        case impl::WebNumericValueKind::Num:
+            jsb_check(false);
+            return false;
+        }
+#else
         if (p_jval->IsInt32())
         {
             r_cvar = p_jval.As<v8::Int32>()->Value();
@@ -495,6 +511,7 @@ namespace jsb
             r_cvar = p_jval.As<v8::Number>()->Value();
             return true;
         }
+#endif
         if (p_jval->IsString())
         {
             // directly return from cached StringName only if it exists

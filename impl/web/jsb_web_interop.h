@@ -142,6 +142,7 @@ JSBROWSER_API bool   jsbi_BooleanValue(jsb::impl::JSRuntime engine_id, jsb::impl
 JSBROWSER_API int32_t  jsbi_Int32Value(jsb::impl::JSRuntime engine_id, jsb::impl::StackPosition stack_pos);
 JSBROWSER_API uint32_t jsbi_Uint32Value(jsb::impl::JSRuntime engine_id, jsb::impl::StackPosition stack_pos);
 JSBROWSER_API bool  jsbi_Int64Value(jsb::impl::JSRuntime engine_id, jsb::impl::StackPosition stack_pos, int64_t* o_value);
+JSBROWSER_API double jsbi_GetNumericValue(jsb::impl::JSRuntime engine_id, jsb::impl::StackPosition stack_pos, int32_t* o_kind);
 
 JSBROWSER_API int   jsbi_hash(jsb::impl::JSRuntime engine_id, jsb::impl::StackPosition stack_pos);
 JSBROWSER_API bool  jsbi_stack_eq(jsb::impl::JSRuntime engine_id, jsb::impl::StackPosition stack_pos1, jsb::impl::StackPosition stack_pos2);

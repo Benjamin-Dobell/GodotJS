@@ -100,6 +100,7 @@ const GodotJSBrowserInterface = {
     "jsbi_Int32Value": function (engine_id, stack_pos) { return _jsbb_.GetEngine(engine_id).Int32Value(stack_pos); },
     "jsbi_Uint32Value": function (engine_id, stack_pos) { return _jsbb_.GetEngine(engine_id).Uint32Value(stack_pos); },
     "jsbi_Int64Value": function (engine_id, stack_pos, o_value_ptr) { return _jsbb_.GetEngine(engine_id).Int64Value(stack_pos, o_value_ptr); },
+    "jsbi_GetNumericValue": function (engine_id, stack_pos, o_kind) { return _jsbb_.GetEngine(engine_id).GetNumericValue(stack_pos, o_kind); },
 
     "jsbi_hash": function (engine_id, stack_pos) { return _jsbb_.GetEngine(engine_id).GetIdentityHash(stack_pos); },
     "jsbi_stack_eq": function (engine_id, stack_pos1, stack_pos2) {
