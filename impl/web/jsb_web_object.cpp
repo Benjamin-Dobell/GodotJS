@@ -102,6 +102,18 @@ namespace v8
         return MaybeLocal<Value>(Data(isolate_, rval));
     }
 
+    MaybeLocal<Value> Object::GetAndCheckUndefined(Local<Context> context, Local<Value> key, bool& r_is_undefined) const
+    {
+        const jsb::impl::StackPosition encoded_rval = jsbi_GetPropertyAndCheckUndefined(isolate_->rt(), stack_pos_, key->stack_pos_);
+        if (encoded_rval == jsb::impl::StackBase::Error)
+        {
+            return MaybeLocal<Value>();
+        }
+        r_is_undefined = encoded_rval < 0;
+        const jsb::impl::StackPosition rval = r_is_undefined ? ~encoded_rval : encoded_rval;
+        return MaybeLocal<Value>(Data(isolate_, rval));
+    }
+
     Maybe<bool> Object::HasOwnProperty(Local<Context> context, Local<Name> key) const
     {
         const jsb::impl::ResultValue res = jsbi_HasOwnProperty(isolate_->rt(), stack_pos_, key->stack_pos_);

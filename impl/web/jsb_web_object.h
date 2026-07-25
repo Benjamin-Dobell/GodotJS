@@ -28,6 +28,7 @@ namespace v8
 
         MaybeLocal<Value> Get(Local<Context> context, Local<Value> key) const;
         MaybeLocal<Value> Get(Local<Context> context, uint32_t index) const;
+        MaybeLocal<Value> GetAndCheckUndefined(Local<Context> context, Local<Value> key, bool& r_is_undefined) const;
 
         Maybe<bool> DefineOwnProperty(
             Local<Context> context, Local<Name> key, Local<Value> value,

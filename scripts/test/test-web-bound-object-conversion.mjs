@@ -65,17 +65,17 @@ const conversionSource = sourceBetween(
 );
 assert.match(
     conversionSource,
-    /if \(maybe_target\.ToLocal\(&target\) && !target->IsUndefined\(\)\)\s*\{\s*return js_to_gd_obj\(isolate, context, target, r_godot_obj\);\s*\}/,
-    "proxy-target recursion and its existing MaybeLocal behavior must remain before direct conversion",
+    /#if JSB_WITH_WEB[\s\S]*?GetAndCheckUndefined\([\s\S]*?#else[\s\S]*?object->Get\([\s\S]*?#endif[\s\S]*?#if JSB_WITH_WEB[\s\S]*?maybe_target\.ToLocal\(&target\) && !target_is_undefined[\s\S]*?#else[\s\S]*?maybe_target\.ToLocal\(&target\) && !target->IsUndefined\(\)[\s\S]*?#endif[\s\S]*?return js_to_gd_obj\(isolate, context, target, r_godot_obj\);/,
+    "proxy-target recursion must preserve Web compound and native MaybeLocal/undefined behavior",
 );
 assert.ok(
     conversionSource.indexOf("return js_to_gd_obj(isolate, context, target, r_godot_obj);")
-        < conversionSource.indexOf("#if JSB_WITH_WEB"),
+        < conversionSource.indexOf("void* internal_fields[IF_ObjectFieldCount];"),
     "proxy lookup, recursion, and exception propagation must remain ahead of the direct Web fast path",
 );
 
 const webBranchMatch = conversionSource.match(
-    /#if JSB_WITH_WEB([\s\S]*?)#else([\s\S]*?)#endif/,
+    /#if JSB_WITH_WEB\s*(void\* internal_fields[\s\S]*?)#else([\s\S]*?)#endif/,
 );
 assert.ok(webBranchMatch, "direct conversion must isolate the grouped reader behind JSB_WITH_WEB");
 const [, webBranchSource, nativeBranchSource] = webBranchMatch;

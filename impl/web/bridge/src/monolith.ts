@@ -1583,6 +1583,15 @@ class jsbb_Engine {
         }
     }
 
+    GetPropertyAndCheckUndefined(obj_sp: StackPosition, key_sp: StackPosition): StackPosition {
+        const rval = this.GetProperty(obj_sp, key_sp);
+        if (rval === jsbb_StackPos.Error) {
+            return rval;
+        }
+        this._profile?.Increment(jsbb_WebBridgeCounter.TypeIsUndefined);
+        return this._stack.GetValue(rval) === undefined ? ~rval : rval;
+    }
+
     GetPropertyUint32(obj_sp: StackPosition, index: number): StackPosition {
         this._profile?.Increment(jsbb_WebBridgeCounter.PropertyGetIndex);
         const obj = this._stack.GetValue(obj_sp);

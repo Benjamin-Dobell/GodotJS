@@ -131,8 +131,8 @@ for (const fallback of ["IsString()", "IsArrayBuffer()", "IsObject()", "IsBigInt
 }
 assert.match(
     conversionSource,
-    /if \(maybe_target\.ToLocal\(&target\) && !target->IsUndefined\(\)\)\s*\{\s*return js_to_gd_var\(isolate, context, target, r_cvar\);\s*\}/,
-    "proxy target recursion and error handling must remain unchanged",
+    /#if JSB_WITH_WEB[\s\S]*?self->GetAndCheckUndefined\([\s\S]*?#else[\s\S]*?self->Get\([\s\S]*?#endif[\s\S]*?#if JSB_WITH_WEB[\s\S]*?maybe_target\.ToLocal\(&target\) && !target_is_undefined[\s\S]*?#else[\s\S]*?maybe_target\.ToLocal\(&target\) && !target->IsUndefined\(\)[\s\S]*?#endif[\s\S]*?return js_to_gd_var\(isolate, context, target, r_cvar\);/,
+    "proxy target recursion must preserve Web compound and native error/undefined handling",
 );
 
 const transpiledMonolith = ts.transpileModule(monolithSource, {

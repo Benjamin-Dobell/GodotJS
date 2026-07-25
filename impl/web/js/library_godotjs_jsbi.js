@@ -80,6 +80,7 @@ const GodotJSBrowserInterface = {
     "jsbi_PromiseResolverReject": function (engine_id, resolver_sp, value_sp) { return _jsbb_.GetEngine(engine_id).PromiseResolverReject(resolver_sp, value_sp); },
     "jsbi_GetPropertyAtomID": function (engine_id, obj_sp, atom_id) { return _jsbb_.GetEngine(engine_id).GetPropertyAtomID(obj_sp, atom_id); },
     "jsbi_GetProperty": function (engine_id, obj_sp, key_sp) { return _jsbb_.GetEngine(engine_id).GetProperty(obj_sp, key_sp); },
+    "jsbi_GetPropertyAndCheckUndefined": function (engine_id, obj_sp, key_sp) { return _jsbb_.GetEngine(engine_id).GetPropertyAndCheckUndefined(obj_sp, key_sp); },
     "jsbi_GetPropertyUint32": function (engine_id, obj_sp, index) { return _jsbb_.GetEngine(engine_id).GetPropertyUint32(obj_sp, index); },
     "jsbi_GetOwnPropertyNames": function (engine_id, obj_sp, filter, key_conversion) { return _jsbb_.GetEngine(engine_id).GetOwnPropertyNames(obj_sp, filter, key_conversion); },
     "jsbi_GetOwnPropertyDescriptor": function (engine_id, obj_sp, key_sp) { return _jsbb_.GetEngine(engine_id).GetOwnPropertyDescriptor(obj_sp, key_sp); },

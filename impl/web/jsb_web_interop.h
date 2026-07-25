@@ -118,6 +118,8 @@ JSBROWSER_API jsb::impl::ResultValue jsbi_PromiseResolverResolve(jsb::impl::JSRu
 JSBROWSER_API jsb::impl::ResultValue jsbi_PromiseResolverReject(jsb::impl::JSRuntime engine_id, jsb::impl::StackPosition resolver_sp, jsb::impl::StackPosition value_sp);
 JSBROWSER_API jsb::impl::StackPosition jsbi_GetPropertyAtomID(jsb::impl::JSRuntime engine_id, jsb::impl::StackPosition obj_sp, int atom_id);
 JSBROWSER_API jsb::impl::StackPosition jsbi_GetProperty(jsb::impl::JSRuntime engine_id, jsb::impl::StackPosition obj_sp, jsb::impl::StackPosition key_sp);
+// Returns Error, the position itself for a defined value, or its bitwise complement for undefined.
+JSBROWSER_API jsb::impl::StackPosition jsbi_GetPropertyAndCheckUndefined(jsb::impl::JSRuntime engine_id, jsb::impl::StackPosition obj_sp, jsb::impl::StackPosition key_sp);
 JSBROWSER_API jsb::impl::StackPosition jsbi_GetPropertyUint32(jsb::impl::JSRuntime engine_id, jsb::impl::StackPosition obj_sp, uint32_t index);
 JSBROWSER_API jsb::impl::StackPosition jsbi_GetOwnPropertyNames(jsb::impl::JSRuntime engine_id, jsb::impl::StackPosition obj_sp, int filter, int key_conversion);
 JSBROWSER_API jsb::impl::StackPosition jsbi_GetOwnPropertyDescriptor(jsb::impl::JSRuntime engine_id, jsb::impl::StackPosition obj_sp, jsb::impl::StackPosition key_sp);

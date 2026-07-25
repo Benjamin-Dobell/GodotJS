@@ -12,6 +12,7 @@
     "test:web-cache-lookup": "node scripts/test/test-web-cache-lookup.mjs",
     "test:web-identity-hash": "node scripts/test/test-web-identity-hash.mjs",
     "test:web-numeric-value": "node scripts/test/test-web-numeric-value.mjs",
+    "test:web-property-undefined": "node scripts/test/test-web-property-undefined.mjs",
     "test:web-promise-rejection-scope": "node scripts/test/test-web-promise-rejection-scope.mjs",
     "test:web-weak-handle-resolve": "node scripts/test/test-web-weak-handle-resolve.mjs",
     "test:web-weak-global-reset": "node scripts/test/test-web-weak-global-reset.mjs",
