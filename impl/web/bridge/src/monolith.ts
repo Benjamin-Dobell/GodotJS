@@ -2857,6 +2857,16 @@ if (jsbb_is_pthread && typeof globalThis.addEventListener === "function") {
 
 const jsbb_browser = globalThis;
 const jsbb_web_bridge_profile = Object.freeze({
+    "wasm_memory_bytes": (): number | undefined => {
+        try {
+            const byte_length = wasmMemory?.buffer?.byteLength;
+            return typeof byte_length === "number" && Number.isFinite(byte_length) && byte_length > 0
+                ? byte_length
+                : undefined;
+        } catch {
+            return undefined;
+        }
+    },
     "set_enabled": (engine_id: EngineID, enabled: boolean): boolean => {
         return _jsbb_.GetEngine(engine_id)?.SetWebBridgeProfileEnabled(Boolean(enabled)) ?? false;
     },

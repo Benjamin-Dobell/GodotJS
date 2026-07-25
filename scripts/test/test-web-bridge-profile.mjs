@@ -130,6 +130,33 @@ assert.equal(bridge.jsbi_NewEngine(1234), 0);
 
 const profiler = context.GodotJSBridgeProfiler;
 assert.ok(Object.isFrozen(profiler));
+const closureRenamedEngine = {
+    a: {
+        wasmMemory: context.wasmMemory,
+    },
+};
+assert.equal(
+    closureRenamedEngine.rtenv,
+    undefined,
+    "Closure-renamed private Engine fields must not be the WASM-memory evidence boundary",
+);
+assert.match(
+    monolithSource,
+    /"wasm_memory_bytes"\s*:/,
+    "the WASM-memory facade property must remain quoted for Closure release builds",
+);
+assert.equal(
+    profiler["wasm_memory_bytes"](),
+    memory.byteLength,
+    "the quoted profiler facade must expose positive WASM-memory bytes independently of private Engine names",
+);
+context.wasmMemory.buffer = new ArrayBuffer(0);
+assert.equal(
+    profiler["wasm_memory_bytes"](),
+    undefined,
+    "the WASM-memory facade must reject non-positive evidence",
+);
+context.wasmMemory.buffer = memory;
 
 const disabled = profiler.snapshot(0);
 assert.equal(disabled.enabled, false);
