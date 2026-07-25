@@ -102,8 +102,9 @@ const GodotJSBrowserInterface = {
     },
 
     "jsbi_handle_eq": function (engine_id, val1, val2) {
-        const v1 = _jsbb_.GetEngine(engine_id).handles.GetValue(val1);
-        const v2 = _jsbb_.GetEngine(engine_id).handles.GetValue(val2);
+        const handles = _jsbb_.GetEngine(engine_id).handles;
+        const v1 = handles.GetValue(val1);
+        const v2 = handles.GetValue(val2);
         return v1 === v2;
     },
     "jsbi_handle_IsValid": function (engine_id, handle) { return _jsbb_.GetEngine(engine_id).handles.IsValid(handle); },

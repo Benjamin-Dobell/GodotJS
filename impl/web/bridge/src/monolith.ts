@@ -329,7 +329,7 @@ class jsbb_Handles {
             jsbb_console.warn("invalid handle id", handle_id);
             return;
         }
-        const target = handle.token.deref();
+        const target = handle.sref ?? handle.token.deref();
         if (target instanceof jsbb_Wrapper) {
             return target.target;
         }
