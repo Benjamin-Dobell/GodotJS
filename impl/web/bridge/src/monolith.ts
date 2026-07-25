@@ -130,7 +130,7 @@ const jsbb_PropertyFilter = {
     SKIP_SYMBOLS: 16
 };
 
-const jsbb_WebBridgeProfileVersion = 2;
+const jsbb_WebBridgeProfileVersion = 3;
 const jsbb_WebBridgeProfileMaxOperationDepth = 16;
 
 const enum jsbb_WebBridgeOperation {
@@ -182,6 +182,7 @@ enum jsbb_WebBridgeCounter {
     HandleReset,
     HandleGet,
     HandleIsValid,
+    HandleResolveAndPush,
     HandleSetWeak,
     HandleSetStrong,
     HandleCollected,
@@ -264,6 +265,7 @@ const jsbb_WebBridgeCounterNames = [
     "handle_reset",
     "handle_get",
     "handle_is_valid",
+    "handle_resolve_and_push",
     "handle_set_weak",
     "handle_set_strong",
     "handle_collected",
@@ -695,6 +697,25 @@ class jsbb_Handles {
         --this._count;
         this._profile?.Increment(jsbb_WebBridgeCounter.HandleCollected);
         return false;
+    }
+
+    ResolveAndPush(handle_id: GlobalID, stack: jsbb_Stack<any>): StackPosition {
+        this._profile?.Increment(jsbb_WebBridgeCounter.HandleResolveAndPush);
+        const handle = this._handles[handle_id];
+        if (typeof handle === "undefined") {
+            return -1;
+        }
+
+        const target = handle.sref ?? handle.token.deref();
+        if (typeof target === "undefined") {
+            jsbb_console.trace("obsolete handle", handle_id);
+            delete this._handles[handle_id];
+            --this._count;
+            this._profile?.Increment(jsbb_WebBridgeCounter.HandleCollected);
+            return -1;
+        }
+
+        return stack.Push(target instanceof jsbb_Wrapper ? target.target : target);
     }
 
     // unsafe, must ensure a valid index by yourself

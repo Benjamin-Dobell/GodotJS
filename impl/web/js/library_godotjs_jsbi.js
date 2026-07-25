@@ -129,6 +129,10 @@ const GodotJSBrowserInterface = {
         const engine = _jsbb_.GetEngine(engine_id);
         return engine.stack.Push(engine.handles.GetValue(handle));
     },
+    "jsbi_handle_ResolveAndPushStack": function (engine_id, handle) {
+        const engine = _jsbb_.GetEngine(engine_id);
+        return engine.handles.ResolveAndPush(handle, engine.stack);
+    },
 
     "jsbi_IsNullOrUndefined": function (engine_id, stack_pos) {
         const engine = _jsbb_.GetEngine(engine_id);

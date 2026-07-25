@@ -530,12 +530,17 @@ namespace jsb
         {
             if (const ObjectHandleConstPtr ptr = object_db_.try_get_object(p_key))
             {
+#if JSB_WITH_WEB
+                r_unwrap = ptr->ref_.Get(isolate_);
+                return !r_unwrap.IsEmpty();
+#else
                 if (jsb_unlikely(ptr->ref_.IsEmpty()))
                 {
                     return false;
                 }
                 r_unwrap = ptr->ref_.Get(isolate_);
                 return !r_unwrap.IsEmpty();
+#endif
             }
             return false;
         }

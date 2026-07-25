@@ -156,6 +156,7 @@ JSBROWSER_API void jsbi_handle_SetWeak(jsb::impl::JSRuntime engine_id, jsb::impl
 JSBROWSER_API void jsbi_handle_Reset(jsb::impl::JSRuntime engine_id, jsb::impl::HandleID handle);
 JSBROWSER_API jsb::impl::HandleID jsbi_handle_New(jsb::impl::JSRuntime engine_id, jsb::impl::StackPosition val_sp);
 JSBROWSER_API jsb::impl::StackPosition jsbi_handle_PushStack(jsb::impl::JSRuntime engine_id, jsb::impl::HandleID handle);
+JSBROWSER_API jsb::impl::StackPosition jsbi_handle_ResolveAndPushStack(jsb::impl::JSRuntime engine_id, jsb::impl::HandleID handle);
 
 // JS VALUE TYPE CHECKING
 JSBROWSER_API bool  jsbi_IsNullOrUndefined(jsb::impl::JSRuntime engine_id, jsb::impl::StackPosition stack_pos);

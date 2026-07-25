@@ -97,7 +97,7 @@ assert.doesNotMatch(
 );
 assert.match(monolithSource, /ValueNumeric,\s*ValueNumber,/);
 assert.match(monolithSource, /"value_numeric",\s*"value_number",/);
-assert.match(monolithSource, /const jsbb_WebBridgeProfileVersion = 2;/);
+assert.match(monolithSource, /const jsbb_WebBridgeProfileVersion = 3;/);
 
 const conversionSource = sourceBetween(
     typeConvertSource,
@@ -228,7 +228,7 @@ assert.equal(bridge.jsbi_NewEngine(1234), 0);
 
 const profiler = context.GodotJSBridgeProfiler;
 assert.equal(profiler.set_enabled(0, true), true);
-assert.equal(profiler.snapshot(0).version, 2, "the named counter schema must publish version 2");
+assert.equal(profiler.snapshot(0).version, 3, "the named counter schema must publish version 3");
 const fixture = context.__numericValueTest;
 fixture.initializeI64();
 const kindPointer = 2048;

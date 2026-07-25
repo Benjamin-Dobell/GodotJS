@@ -281,8 +281,20 @@ namespace v8
 
         Local<T> Get(Isolate* isolate) const
         {
-            jsb_check(isolate_ == isolate && isolate_ && is_alive());
-            return Local<T>(Data(isolate_, jsbi_handle_PushStack(jsb::impl::Broker::get_engine(isolate_), value_)));
+            jsb_check(isolate_ == isolate && isolate_);
+            if (jsb_unlikely(!isolate_ || isolate_ != isolate))
+            {
+                return {};
+            }
+
+            const jsb::impl::StackPosition stack_pos =
+                jsbi_handle_ResolveAndPushStack(jsb::impl::Broker::get_engine(isolate_), value_);
+            if (jsb_unlikely(stack_pos < 0))
+            {
+                jsb_check(weak_type_ != WeakType::kStrong);
+                return {};
+            }
+            return Local<T>(Data(isolate_, stack_pos));
         }
 
         template <typename S>
