@@ -687,14 +687,24 @@ namespace jsb
 
         // return false if strict type check fails
         const v8::Local<v8::Object> self = p_jval.As<v8::Object>();
+        // dead objects return true with a nullptr
+#if JSB_WITH_WEB
+        void* internal_fields[IF_ObjectFieldCount];
+        if (!impl::Helper::get_internal_fields(self, IF_ObjectFieldCount, internal_fields)
+            || (NativeClassType::Type)(uintptr_t) internal_fields[IF_ClassType] != NativeClassType::GodotObject)
+        {
+            return false;
+        }
+        void* pointer = internal_fields[IF_Pointer];
+#else
         if (!TypeConvert::is_object(self)
             || (NativeClassType::Type)(uintptr_t) self->GetAlignedPointerFromInternalField(IF_ClassType) != NativeClassType::GodotObject)
         {
             return false;
         }
 
-        // dead objects return true with a nullptr
         void* pointer = self->GetAlignedPointerFromInternalField(IF_Pointer);
+#endif
         r_godot_obj = Environment::wrap(isolate)->verify_object(pointer) ? (Object*) pointer : nullptr;
         return true;
     }

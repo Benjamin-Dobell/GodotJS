@@ -29,6 +29,28 @@ namespace jsb::impl
             data->weak.callback = (void*) callback;
         }
 
+        static bool get_internal_fields(const v8::Local<v8::Object>& p_object, int p_expected_field_count, void* r_fields[])
+        {
+            v8::Isolate* isolate = p_object->GetIsolate();
+            const jsb::impl::InternalDataID index = (jsb::impl::InternalDataID)(uintptr_t) jsbi_GetOpaque(isolate->rt(), p_object->stack_pos_);
+            if (!index)
+            {
+                return false;
+            }
+
+            const jsb::impl::InternalDataPtr data = isolate->get_internal_data(index);
+            if (!data || data->internal_field_count != p_expected_field_count)
+            {
+                return false;
+            }
+
+            for (int index = 0; index < p_expected_field_count; ++index)
+            {
+                r_fields[index] = data->internal_fields[index];
+            }
+            return true;
+        }
+
         static PackedByteArray to_packed_byte_array(v8::Isolate* isolate, const v8::Local<v8::ArrayBuffer>& array_buffer)
         {
             const int size = jsbi_GetByteLength(isolate->rt(), array_buffer->stack_pos_);
