@@ -1554,7 +1554,11 @@ namespace jsb
     {
         v8::Isolate* isolate = get_isolate();
         impl::WebBridgeProfileScope web_profile_scope(isolate, impl::WebBridgeOperation::FunctionCache);
+#if JSB_WITH_WEB
+        const auto& it = function_refs_.find(TLocalRef(p_func));
+#else
         const auto& it = function_refs_.find(TWeakRef(isolate, p_func));
+#endif
         if (it != function_refs_.end())
         {
             const ObjectCacheID callback_id = it->second;

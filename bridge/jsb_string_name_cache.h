@@ -65,7 +65,11 @@ namespace jsb
         bool try_get_string_name(v8::Isolate* isolate, const v8::Local<v8::String>& p_value, StringName& r_string_name) const 
         {
             impl::WebBridgeProfileScope web_profile_scope(isolate, impl::WebBridgeOperation::StringNameCache);
+#if JSB_WITH_WEB
+            if (const auto& it = value_index_.find(TLocalRef(p_value)); it != value_index_.end())
+#else
             if (const auto& it = value_index_.find(TStrongRef(isolate, p_value)); it != value_index_.end())
+#endif
             {
                 const StringNameID id = it->second;
                 r_string_name = values_[id].name_;
@@ -85,7 +89,11 @@ namespace jsb
         StringName get_string_name(v8::Isolate* isolate, const v8::Local<v8::String>& p_value)
         {
             impl::WebBridgeProfileScope web_profile_scope(isolate, impl::WebBridgeOperation::StringNameCache);
+#if JSB_WITH_WEB
+            if (const auto& it = value_index_.find(TLocalRef(p_value)); it != value_index_.end())
+#else
             if (const auto& it = value_index_.find(TStrongRef(isolate, p_value)); it != value_index_.end())
+#endif
             {
                 const StringNameID id = it->second;
                 const StringName name = values_[id].name_;

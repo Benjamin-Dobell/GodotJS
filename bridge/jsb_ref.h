@@ -5,6 +5,30 @@
 
 namespace jsb
 {
+#if JSB_WITH_WEB
+    /**
+     * A non-owning view used only for synchronous heterogeneous map lookup.
+     * The referenced Local must remain inside its active Web stack scope.
+     */
+    template<typename T>
+    struct TLocalRef
+    {
+        int hash_;
+        v8::Local<T> object_;
+
+        explicit TLocalRef(const v8::Local<T>& p_object)
+        {
+            hash_ = p_object->GetIdentityHash();
+            object_ = p_object;
+        }
+
+        jsb_force_inline uint32_t hash() const
+        {
+            return (uint32_t) hash_;
+        }
+    };
+#endif
+
     /**
      * a javascript object reference (weak)
      * @note it can be used as key of `std:unordered_map`, but can not be used as key of `HashMap` since `move` is not supported by `HashMap`
@@ -109,5 +133,52 @@ namespace jsb
         }
     };
 }
+
+#if JSB_WITH_WEB
+namespace jsb::internal
+{
+    template<typename T>
+    struct Hasher<TWeakRef<T>>
+    {
+        struct hasher
+        {
+            using is_transparent = void;
+
+            jsb_force_inline size_t operator()(const TWeakRef<T>& obj) const noexcept { return obj.hash(); }
+            jsb_force_inline size_t operator()(const TLocalRef<T>& obj) const noexcept { return obj.hash(); }
+        };
+
+        struct equaler
+        {
+            using is_transparent = void;
+
+            jsb_force_inline bool operator()(const TWeakRef<T>& lhs, const TWeakRef<T>& rhs) const { return lhs == rhs; }
+            jsb_force_inline bool operator()(const TLocalRef<T>& lhs, const TWeakRef<T>& rhs) const { return lhs.object_ == rhs.object_; }
+            jsb_force_inline bool operator()(const TWeakRef<T>& lhs, const TLocalRef<T>& rhs) const { return lhs.object_ == rhs.object_; }
+        };
+    };
+
+    template<typename T>
+    struct Hasher<TStrongRef<T>>
+    {
+        struct hasher
+        {
+            using is_transparent = void;
+
+            jsb_force_inline size_t operator()(const TStrongRef<T>& obj) const noexcept { return obj.hash(); }
+            jsb_force_inline size_t operator()(const TLocalRef<T>& obj) const noexcept { return obj.hash(); }
+        };
+
+        struct equaler
+        {
+            using is_transparent = void;
+
+            jsb_force_inline bool operator()(const TStrongRef<T>& lhs, const TStrongRef<T>& rhs) const { return lhs == rhs; }
+            jsb_force_inline bool operator()(const TLocalRef<T>& lhs, const TStrongRef<T>& rhs) const { return lhs.object_ == rhs.object_; }
+            jsb_force_inline bool operator()(const TStrongRef<T>& lhs, const TLocalRef<T>& rhs) const { return lhs.object_ == rhs.object_; }
+        };
+    };
+}
+#endif
 
 #endif
