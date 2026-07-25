@@ -789,6 +789,8 @@ class jsbb_Engine {
     private _opaque: IntPtr = 0;
     private _profile: jsbb_WebBridgeProfileState | undefined;
     private _profile_generation = 0;
+    private _identity_hashes: WeakMap<object, number>;
+    private _identity_hash_idgen = 0;
 
     get stack() { return this._stack; }
 
@@ -802,6 +804,14 @@ class jsbb_Engine {
             this._profile_generation = 1;
         }
         return this._profile_generation;
+    }
+
+    private NextIdentityHash(): number {
+        this._identity_hash_idgen = (this._identity_hash_idgen + 1) | 0;
+        if (this._identity_hash_idgen === 0) {
+            this._identity_hash_idgen = 1;
+        }
+        return this._identity_hash_idgen;
     }
 
     SetWebBridgeProfileEnabled(enabled: boolean): boolean {
@@ -894,6 +904,7 @@ class jsbb_Engine {
         this._stack = new jsbb_Stack();
         this._handles = new jsbb_Handles();
         this._registry = new jsbb_Registry(opaque);
+        this._identity_hashes = new WeakMap();
 
         // init all commonly used string here
         this._atoms = new Array(3);
@@ -930,6 +941,7 @@ class jsbb_Engine {
         this._handles = <any>undefined;
         this._stack = <any>undefined;
         this._registry = <any>undefined;
+        this._identity_hashes = <any>undefined;
     }
 
     SetHostPromiseRejectionTracker(cb: FunctionPointer, data: Pointer) {
@@ -1018,16 +1030,27 @@ class jsbb_Engine {
             if (hash === 0) this._profile?.Increment(jsbb_WebBridgeCounter.IdentityHashZero);
             return hash;
         }
-        // if (typeof val === "function")
-        // if (typeof val === "object")
-        // if (typeof val === "symbol")
+        if (typeof val === "function" || typeof val === "object") {
+            // Internal data index as hash since it never changes. Check this before
+            // assigning an ordinary identity so bound values preserve their opaque ID.
+            const opaque = val[jsbb_opaque];
+            if (typeof opaque !== "undefined") {
+                const hash = opaque | 0;
+                if (hash === 0) this._profile?.Increment(jsbb_WebBridgeCounter.IdentityHashZero);
+                return hash;
+            }
 
-        // internal data index as hash since it's never changed
-        if (typeof val[jsbb_opaque] !== "undefined") {
-            const hash = val[jsbb_opaque] | 0;
-            if (hash === 0) this._profile?.Increment(jsbb_WebBridgeCounter.IdentityHashZero);
+            let hash = this._identity_hashes.get(val);
+            if (typeof hash === "undefined") {
+                hash = this.NextIdentityHash();
+                this._identity_hashes.set(val, hash);
+            }
             return hash;
         }
+
+        // Symbols intentionally retain the zero hash. A strong symbol-keyed map
+        // would keep symbols alive for the engine lifetime; strict equality is the
+        // collision fallback for this uncommon primitive type.
         this._profile?.Increment(jsbb_WebBridgeCounter.IdentityHashZero);
         return 0;
     }
