@@ -9,6 +9,7 @@ import ts from "../../impl/web/bridge/node_modules/typescript/lib/typescript.js"
 const testDirectory = dirname(fileURLToPath(import.meta.url));
 const moduleRoot = resolve(testDirectory, "../..");
 const monolithPath = join(moduleRoot, "impl/web/bridge/src/monolith.ts");
+const bridgeConfigPath = join(moduleRoot, "impl/web/bridge/tsconfig.json");
 const libraryPath = join(moduleRoot, "impl/web/js/library_godotjs_jsbi.js");
 const profileHeaderPath = join(moduleRoot, "impl/shared/jsb_web_bridge_profile.h");
 
@@ -17,7 +18,7 @@ const librarySource = readFileSync(libraryPath, "utf8");
 const profileHeaderSource = readFileSync(profileHeaderPath, "utf8");
 
 function enumMembers(source, enumName) {
-    const match = source.match(new RegExp(`enum(?:\\s+class)?\\s+${enumName}[^\\{]*\\{([\\s\\S]*?)\\}`));
+    const match = source.match(new RegExp(`(?:const\\s+)?enum(?:\\s+class)?\\s+${enumName}[^\\{]*\\{([\\s\\S]*?)\\}`));
     assert.ok(match, `missing enum ${enumName}`);
     return match[1]
         .split(",")
@@ -26,14 +27,126 @@ function enumMembers(source, enumName) {
         .map((entry) => entry.split("=")[0].trim());
 }
 
+function diagnosticMessages(diagnostics) {
+    return diagnostics.map((diagnostic) => ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n"));
+}
+
+function codeWithoutComments(source) {
+    return source
+        .replace(/\/\*[\s\S]*?\*\//g, "")
+        .replace(/\/\/.*$/gm, "");
+}
+
+function emitBridgeWithTypeScript() {
+    const configFile = ts.readConfigFile(bridgeConfigPath, ts.sys.readFile);
+    assert.equal(configFile.error, undefined, "bridge TypeScript configuration must parse");
+
+    const parsedConfig = ts.parseJsonConfigFileContent(
+        configFile.config,
+        ts.sys,
+        dirname(bridgeConfigPath),
+        {
+            incremental: false,
+            tsBuildInfoFile: undefined,
+        },
+        bridgeConfigPath,
+    );
+    assert.deepEqual(diagnosticMessages(parsedConfig.errors), [], "bridge TypeScript configuration must be valid");
+
+    const emittedFiles = [];
+    const host = ts.createCompilerHost(parsedConfig.options);
+    host.writeFile = (_fileName, text) => emittedFiles.push(text);
+    const program = ts.createProgram(parsedConfig.fileNames, parsedConfig.options, host);
+    const emitResult = program.emit();
+    assert.equal(emitResult.emitSkipped, false, "bridge TypeScript production emit must complete");
+    assert.deepEqual(
+        diagnosticMessages([...ts.getPreEmitDiagnostics(program), ...emitResult.diagnostics]),
+        [],
+        "bridge TypeScript production emit must not report diagnostics",
+    );
+    assert.notEqual(emittedFiles.length, 0, "bridge TypeScript production emit must produce JavaScript");
+    return emittedFiles.join("\n");
+}
+
+function sourceBetween(source, start, end) {
+    const startIndex = source.indexOf(start);
+    assert.notEqual(startIndex, -1, `missing source boundary: ${start}`);
+
+    const endIndex = source.indexOf(end, startIndex + start.length);
+    assert.notEqual(endIndex, -1, `missing source boundary: ${end}`);
+
+    return source.slice(startIndex, endIndex);
+}
+
+function assertQuotedObjectKeys(source, keys, boundary) {
+    for (const key of keys) {
+        assert.match(
+            source,
+            new RegExp(`"${key}"\\s*:`),
+            `${boundary} must quote public key "${key}" for Closure ADVANCED`,
+        );
+    }
+}
+
+function sortedObjectKeys(value) {
+    return Object.keys(value).sort();
+}
+
 const cppOperations = enumMembers(profileHeaderSource, "WebBridgeOperation");
 const tsOperations = enumMembers(monolithSource, "jsbb_WebBridgeOperation");
 assert.deepEqual(tsOperations, cppOperations, "C++ and TypeScript operation IDs must remain ordered identically");
 
+const productionEmittedMonolith = emitBridgeWithTypeScript();
 const cppDepth = Number(profileHeaderSource.match(/WEB_BRIDGE_PROFILE_MAX_OPERATION_DEPTH\s*=\s*(\d+)/)?.[1]);
 const tsDepth = Number(monolithSource.match(/jsbb_WebBridgeProfileMaxOperationDepth\s*=\s*(\d+)/)?.[1]);
 assert.equal(tsDepth, cppDepth, "C++ and TypeScript operation-depth limits must remain identical");
 assert.equal(tsDepth, 16);
+
+const snapshotTopLevelKeys = [
+    "version",
+    "enabled",
+    "counter_names",
+    "operation_names",
+    "counters",
+    "by_operation",
+    "gauges",
+];
+const snapshotBaseGaugeKeys = [
+    "stack_position",
+    "stack_depth",
+    "handle_count",
+    "highest_handle_id",
+    "handle_holes",
+    "registered_object_count",
+];
+const snapshotDerivedGaugeKeys = [
+    "peak_stack_position",
+    "peak_stack_depth",
+    "operation_depth",
+    "peak_operation_depth",
+];
+const enabledSnapshotSource = sourceBetween(
+    monolithSource,
+    "Snapshot(gauges: jsbb_WebBridgeProfileGauges): jsbb_WebBridgeProfileSnapshot",
+    "interface jsbb_TransferMarker",
+);
+const snapshotFacadeSource = sourceBetween(
+    monolithSource,
+    "GetWebBridgeProfileSnapshot(): jsbb_WebBridgeProfileSnapshot",
+    "/** If calling from C++ side",
+);
+assertQuotedObjectKeys(enabledSnapshotSource, snapshotTopLevelKeys, "enabled profiler snapshot");
+assertQuotedObjectKeys(
+    enabledSnapshotSource,
+    snapshotDerivedGaugeKeys,
+    "enabled profiler derived gauges",
+);
+assertQuotedObjectKeys(snapshotFacadeSource, snapshotTopLevelKeys.slice(0, 4), "disabled profiler snapshot");
+assertQuotedObjectKeys(
+    snapshotFacadeSource,
+    snapshotBaseGaugeKeys,
+    "profiler base gauges",
+);
 
 const transpiledMonolith = ts.transpileModule(monolithSource, {
     compilerOptions: {
@@ -107,7 +220,7 @@ const context = vm.createContext({
 context.globalThis = context;
 
 vm.runInContext(
-    `${transpiledMonolith.outputText}\n${librarySource}`,
+    `${productionEmittedMonolith}\n${librarySource}`,
     context,
     { filename: "godotjs-web-bridge-profile-test.js" },
 );
@@ -160,6 +273,11 @@ context.wasmMemory.buffer = memory;
 
 const disabled = profiler.snapshot(0);
 assert.equal(disabled.enabled, false);
+assert.deepEqual(
+    sortedObjectKeys(disabled),
+    [...snapshotTopLevelKeys.slice(0, 4)].sort(),
+    "disabled snapshot must expose exactly its allocation-free public contract",
+);
 assert.equal("counters" in disabled, false);
 assert.equal("by_operation" in disabled, false);
 assert.equal("gauges" in disabled, false);
@@ -189,6 +307,16 @@ bridge.jsbi_WebBridgeProfileOperationExit(0, operationId.JavaScriptCall, javascr
 
 const attributed = profiler.snapshot(0);
 assert.equal(attributed.enabled, true);
+assert.deepEqual(
+    sortedObjectKeys(attributed),
+    [...snapshotTopLevelKeys].sort(),
+    "enabled snapshot must expose exactly the complete public top-level contract",
+);
+assert.deepEqual(
+    sortedObjectKeys(attributed.gauges),
+    [...snapshotBaseGaugeKeys, ...snapshotDerivedGaugeKeys].sort(),
+    "enabled snapshot must expose exactly the complete public gauge contract",
+);
 assert.equal(attributed.counters.operation_enter, 2);
 assert.equal(attributed.counters.operation_exit, 2);
 assert.equal(attributed.counters.type_is_undefined, 1);

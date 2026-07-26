@@ -464,18 +464,18 @@ class jsbb_WebBridgeProfileState {
         }
 
         return {
-            version: jsbb_WebBridgeProfileVersion,
-            enabled: true,
-            counter_names: [...jsbb_WebBridgeCounterNames],
-            operation_names: [...jsbb_WebBridgeOperationNames],
-            counters,
-            by_operation,
-            gauges: {
+            "version": jsbb_WebBridgeProfileVersion,
+            "enabled": true,
+            "counter_names": [...jsbb_WebBridgeCounterNames],
+            "operation_names": [...jsbb_WebBridgeOperationNames],
+            "counters": counters,
+            "by_operation": by_operation,
+            "gauges": {
                 ...gauges,
-                peak_stack_position: this.peak_stack_position,
-                peak_stack_depth: this.peak_stack_depth,
-                operation_depth: this.operation_depth,
-                peak_operation_depth: this.peak_operation_depth,
+                "peak_stack_position": this.peak_stack_position,
+                "peak_stack_depth": this.peak_stack_depth,
+                "operation_depth": this.operation_depth,
+                "peak_operation_depth": this.peak_operation_depth,
             },
         };
     }
@@ -894,20 +894,20 @@ class jsbb_Engine {
     GetWebBridgeProfileSnapshot(): jsbb_WebBridgeProfileSnapshot {
         if (!this._profile) {
             return {
-                version: jsbb_WebBridgeProfileVersion,
-                enabled: false,
-                counter_names: [...jsbb_WebBridgeCounterNames],
-                operation_names: [...jsbb_WebBridgeOperationNames],
+                "version": jsbb_WebBridgeProfileVersion,
+                "enabled": false,
+                "counter_names": [...jsbb_WebBridgeCounterNames],
+                "operation_names": [...jsbb_WebBridgeOperationNames],
             };
         }
 
         return this._profile.Snapshot({
-            stack_position: this._stack.pos,
-            stack_depth: this._stack.depth,
-            handle_count: this._handles.count,
-            highest_handle_id: this._handles.highest_id,
-            handle_holes: this._handles.holes,
-            registered_object_count: this._registry.count,
+            "stack_position": this._stack.pos,
+            "stack_depth": this._stack.depth,
+            "handle_count": this._handles.count,
+            "highest_handle_id": this._handles.highest_id,
+            "handle_holes": this._handles.holes,
+            "registered_object_count": this._registry.count,
         });
     }
 
