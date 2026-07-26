@@ -96,7 +96,69 @@ const cppOperations = enumMembers(profileHeaderSource, "WebBridgeOperation");
 const tsOperations = enumMembers(monolithSource, "jsbb_WebBridgeOperation");
 assert.deepEqual(tsOperations, cppOperations, "C++ and TypeScript operation IDs must remain ordered identically");
 
+const tsCounters = enumMembers(monolithSource, "jsbb_WebBridgeCounter");
+const sourceCounterReads = monolithSource.match(/\bjsbb_WebBridgeCounter\.[A-Za-z0-9_$]+/g) ?? [];
 const productionEmittedMonolith = emitBridgeWithTypeScript();
+const productionCodeWithoutComments = codeWithoutComments(productionEmittedMonolith);
+const inlinedCounterReads = productionEmittedMonolith.match(
+    /\b\d+\s+\/\*\s*jsbb_WebBridgeCounter\.[A-Za-z0-9_$]+\s*\*\//g,
+) ?? [];
+assert.doesNotMatch(
+    productionCodeWithoutComments,
+    /\b(?:var|let|const)\s+jsbb_WebBridgeCounter\b/,
+    "production TypeScript emit must not contain a runtime counter enum object",
+);
+assert.doesNotMatch(
+    productionCodeWithoutComments,
+    /\bjsbb_WebBridgeCounter\s*(?:\.|\[)/,
+    "production TypeScript emit must not contain Closure-renamable counter member reads",
+);
+assert.equal(
+    inlinedCounterReads.length,
+    sourceCounterReads.length,
+    "production TypeScript emit must inline every counter enum read",
+);
+
+const libraryCounterMembers = [
+    "HandleEquals",
+    "TypeIsNullish",
+    "TypeIsNull",
+    "TypeIsUndefined",
+    "TypeIsExternal",
+    "TypeIsObject",
+    "TypeIsSymbol",
+    "TypeIsString",
+    "TypeIsFunction",
+    "TypeIsBoolean",
+    "TypeIsNumber",
+    "TypeIsBigInt",
+    "TypeIsInt32",
+    "TypeIsUint32",
+    "TypeIsPromise",
+    "TypeIsArray",
+    "TypeIsMap",
+    "TypeIsArrayBuffer",
+];
+assert.doesNotMatch(
+    codeWithoutComments(librarySource),
+    /\bjsbb_WebBridgeCounter\s*(?:\.|\[)/,
+    "the standalone Emscripten library must not depend on the erased runtime counter enum",
+);
+for (const member of libraryCounterMembers) {
+    const counter = tsCounters.indexOf(member);
+    assert.notEqual(counter, -1, `missing counter enum member ${member}`);
+    assert.match(
+        librarySource,
+        new RegExp(`CountWebBridgeOperation\\(\\s*${counter}\\s*\\/\\*\\s*jsbb_WebBridgeCounter\\.${member}\\s*\\*\\/\\s*\\)`),
+        `the standalone Emscripten library must compile ${member} to counter ID ${counter}`,
+    );
+}
+assert.equal(
+    [...librarySource.matchAll(/CountWebBridgeOperation\(/g)].length,
+    libraryCounterMembers.length,
+    "the standalone Emscripten library counter-call inventory must remain complete",
+);
+
 const cppDepth = Number(profileHeaderSource.match(/WEB_BRIDGE_PROFILE_MAX_OPERATION_DEPTH\s*=\s*(\d+)/)?.[1]);
 const tsDepth = Number(monolithSource.match(/jsbb_WebBridgeProfileMaxOperationDepth\s*=\s*(\d+)/)?.[1]);
 assert.equal(tsDepth, cppDepth, "C++ and TypeScript operation-depth limits must remain identical");
@@ -329,7 +391,7 @@ assert.equal(attributed.gauges.operation_depth, 0);
 assert.equal(attributed.gauges.peak_operation_depth, 2);
 assert.equal(attributed.gauges.handle_count, 1);
 assert.equal(attributed.operation_names.length, operationId.Num);
-assert.equal(attributed.counter_names.length, enumMembers(monolithSource, "jsbb_WebBridgeCounter").indexOf("Num"));
+assert.equal(attributed.counter_names.length, tsCounters.indexOf("Num"));
 
 assert.equal(profiler.reset(0), true);
 assert.equal(profileFloat64ArrayAllocations, 2, "reset must reuse fixed counter arrays");

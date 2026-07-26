@@ -112,7 +112,7 @@ const GodotJSBrowserInterface = {
 
     "jsbi_handle_eq": function (engine_id, val1, val2) {
         const engine = _jsbb_.GetEngine(engine_id);
-        engine.CountWebBridgeOperation(jsbb_WebBridgeCounter.HandleEquals);
+        engine.CountWebBridgeOperation(13 /* jsbb_WebBridgeCounter.HandleEquals */);
         const handles = engine.handles;
         const v1 = handles.GetValue(val1);
         const v2 = handles.GetValue(val2);
@@ -137,95 +137,95 @@ const GodotJSBrowserInterface = {
 
     "jsbi_IsNullOrUndefined": function (engine_id, stack_pos) {
         const engine = _jsbb_.GetEngine(engine_id);
-        engine.CountWebBridgeOperation(jsbb_WebBridgeCounter.TypeIsNullish);
+        engine.CountWebBridgeOperation(39 /* jsbb_WebBridgeCounter.TypeIsNullish */);
         const val = engine.stack.GetValue(stack_pos);
         return val === null || val === undefined;
     },
     "jsbi_IsNull": function (engine_id, stack_pos) {
         const engine = _jsbb_.GetEngine(engine_id);
-        engine.CountWebBridgeOperation(jsbb_WebBridgeCounter.TypeIsNull);
+        engine.CountWebBridgeOperation(40 /* jsbb_WebBridgeCounter.TypeIsNull */);
         return engine.stack.GetValue(stack_pos) === null;
     },
     "jsbi_IsUndefined": function (engine_id, stack_pos) {
         const engine = _jsbb_.GetEngine(engine_id);
-        engine.CountWebBridgeOperation(jsbb_WebBridgeCounter.TypeIsUndefined);
+        engine.CountWebBridgeOperation(41 /* jsbb_WebBridgeCounter.TypeIsUndefined */);
         return engine.stack.GetValue(stack_pos) === undefined;
     },
     "jsbi_IsExternal": function (engine_id, stack_pos) {
         const engine = _jsbb_.GetEngine(engine_id);
-        engine.CountWebBridgeOperation(jsbb_WebBridgeCounter.TypeIsExternal);
+        engine.CountWebBridgeOperation(42 /* jsbb_WebBridgeCounter.TypeIsExternal */);
         return engine.IsExternal(stack_pos);
     },
     "jsbi_IsObject": function (engine_id, stack_pos) {
         const engine = _jsbb_.GetEngine(engine_id);
-        engine.CountWebBridgeOperation(jsbb_WebBridgeCounter.TypeIsObject);
+        engine.CountWebBridgeOperation(43 /* jsbb_WebBridgeCounter.TypeIsObject */);
         const val = engine.stack.GetValue(stack_pos);
         return _jsbb_.is_object(val);
     },
     "jsbi_IsSymbol": function (engine_id, stack_pos) {
         const engine = _jsbb_.GetEngine(engine_id);
-        engine.CountWebBridgeOperation(jsbb_WebBridgeCounter.TypeIsSymbol);
+        engine.CountWebBridgeOperation(44 /* jsbb_WebBridgeCounter.TypeIsSymbol */);
         return typeof engine.stack.GetValue(stack_pos) === "symbol";
     },
     "jsbi_IsString": function (engine_id, stack_pos) {
         const engine = _jsbb_.GetEngine(engine_id);
-        engine.CountWebBridgeOperation(jsbb_WebBridgeCounter.TypeIsString);
+        engine.CountWebBridgeOperation(45 /* jsbb_WebBridgeCounter.TypeIsString */);
         return typeof engine.stack.GetValue(stack_pos) === "string";
     },
     "jsbi_IsFunction": function (engine_id, stack_pos) {
         const engine = _jsbb_.GetEngine(engine_id);
-        engine.CountWebBridgeOperation(jsbb_WebBridgeCounter.TypeIsFunction);
+        engine.CountWebBridgeOperation(46 /* jsbb_WebBridgeCounter.TypeIsFunction */);
         return typeof engine.stack.GetValue(stack_pos) === "function";
     },
     "jsbi_IsBoolean": function (engine_id, stack_pos) {
         const engine = _jsbb_.GetEngine(engine_id);
-        engine.CountWebBridgeOperation(jsbb_WebBridgeCounter.TypeIsBoolean);
+        engine.CountWebBridgeOperation(47 /* jsbb_WebBridgeCounter.TypeIsBoolean */);
         return typeof engine.stack.GetValue(stack_pos) === "boolean";
     },
     "jsbi_IsNumber": function (engine_id, stack_pos) {
         const engine = _jsbb_.GetEngine(engine_id);
-        engine.CountWebBridgeOperation(jsbb_WebBridgeCounter.TypeIsNumber);
+        engine.CountWebBridgeOperation(48 /* jsbb_WebBridgeCounter.TypeIsNumber */);
         const val = engine.stack.GetValue(stack_pos);
         return typeof val === "number";
     },
     "jsbi_IsBigInt": function (engine_id, stack_pos) {
         const engine = _jsbb_.GetEngine(engine_id);
-        engine.CountWebBridgeOperation(jsbb_WebBridgeCounter.TypeIsBigInt);
+        engine.CountWebBridgeOperation(49 /* jsbb_WebBridgeCounter.TypeIsBigInt */);
         const val = engine.stack.GetValue(stack_pos);
         return typeof val === "bigint";
     },
     "jsbi_IsInt32": function (engine_id, stack_pos) {
         const engine = _jsbb_.GetEngine(engine_id);
-        engine.CountWebBridgeOperation(jsbb_WebBridgeCounter.TypeIsInt32);
+        engine.CountWebBridgeOperation(50 /* jsbb_WebBridgeCounter.TypeIsInt32 */);
         const val = engine.stack.GetValue(stack_pos);
         return typeof val === "number" && Number.isInteger(val);
     },
     // not really supported
     "jsbi_IsUint32": function (engine_id, stack_pos) {
         const engine = _jsbb_.GetEngine(engine_id);
-        engine.CountWebBridgeOperation(jsbb_WebBridgeCounter.TypeIsUint32);
+        engine.CountWebBridgeOperation(51 /* jsbb_WebBridgeCounter.TypeIsUint32 */);
         const val = engine.stack.GetValue(stack_pos);
         return typeof val === "number" && Number.isInteger(val);
     },
 
     "jsbi_IsPromise": function (engine_id, stack_pos) {
         const engine = _jsbb_.GetEngine(engine_id);
-        engine.CountWebBridgeOperation(jsbb_WebBridgeCounter.TypeIsPromise);
+        engine.CountWebBridgeOperation(52 /* jsbb_WebBridgeCounter.TypeIsPromise */);
         return engine.stack.GetValue(stack_pos) instanceof Promise;
     },
     "jsbi_IsArray": function (engine_id, stack_pos) {
         const engine = _jsbb_.GetEngine(engine_id);
-        engine.CountWebBridgeOperation(jsbb_WebBridgeCounter.TypeIsArray);
+        engine.CountWebBridgeOperation(53 /* jsbb_WebBridgeCounter.TypeIsArray */);
         return engine.stack.GetValue(stack_pos) instanceof Array;
     },
     "jsbi_IsMap": function (engine_id, stack_pos) {
         const engine = _jsbb_.GetEngine(engine_id);
-        engine.CountWebBridgeOperation(jsbb_WebBridgeCounter.TypeIsMap);
+        engine.CountWebBridgeOperation(54 /* jsbb_WebBridgeCounter.TypeIsMap */);
         return engine.stack.GetValue(stack_pos) instanceof Map;
     },
     "jsbi_IsArrayBuffer": function (engine_id, stack_pos) {
         const engine = _jsbb_.GetEngine(engine_id);
-        engine.CountWebBridgeOperation(jsbb_WebBridgeCounter.TypeIsArrayBuffer);
+        engine.CountWebBridgeOperation(56 /* jsbb_WebBridgeCounter.TypeIsArrayBuffer */);
         return engine.stack.GetValue(stack_pos) instanceof ArrayBuffer;
     },
 

@@ -172,7 +172,7 @@ const jsbb_WebBridgeOperationNames = [
     "overflow",
 ] as const;
 
-enum jsbb_WebBridgeCounter {
+const enum jsbb_WebBridgeCounter {
     StackGet,
     StackSet,
     StackPush,
