@@ -404,7 +404,12 @@ namespace v8
 
         void swap_free_queue()
         {
-            jsb_check(!swapping_free_queue_);
+            // Finalizers can create nested HandleScopes. A JSCallable released
+            // while draining the queue may release another cached function and
+            // enqueue more QuickJS values. The outer drain owns the queue swap;
+            // the nested scope must leave those values for the next drain rather
+            // than recursively entering the same critical section.
+            if (swapping_free_queue_) return;
             Vector<JSValue>& queue = using_front_free_queue_ ? front_free_queue_ : back_free_queue_;
             if (queue.is_empty()) return;
 
