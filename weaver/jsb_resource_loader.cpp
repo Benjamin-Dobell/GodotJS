@@ -89,6 +89,13 @@ Ref<Resource> ResourceFormatLoaderGodotJSScript::load(const String& p_path, cons
     }
     JSB_LOG(VeryVerbose, "loading script resource %s on thread %s", p_path, uitos(Thread::get_caller_id()));
 
+    // ResourceLoader passes the generated JavaScript path as p_path when a
+    // TypeScript resource is remapped, while p_original_path remains the
+    // authored resource path. ResourceCache is keyed by the authored local
+    // path during load finalization, so looking up p_path here can return an
+    // object whose recorded path is the authored alias.
+    const String resource_cache_path = p_original_path.is_empty() ? p_path : p_original_path;
+
     // we can't immediately compile the script here since it's possibly loaded from resource loading threads
     switch (p_cache_mode)
     {
@@ -99,11 +106,11 @@ Ref<Resource> ResourceFormatLoaderGodotJSScript::load(const String& p_path, cons
             // seems safe because GodotJSScript is stateless now (but must get script class info in a proper thread).
         case CACHE_MODE_REUSE:
             {
-                if (const Ref<Resource> existing = ResourceCache::get_ref(p_path);
+                if (const Ref<Resource> existing = ResourceCache::get_ref(resource_cache_path);
                     existing.is_valid())
                 {
                     jsb_check(existing->get_class_name() == jsb_typename(GodotJSScript));
-                    jsb_check(existing->get_path() == p_path);
+                    jsb_check(existing->get_path() == resource_cache_path);
                     if (r_error) *r_error = OK;
                     return existing;
                 }
@@ -122,7 +129,13 @@ Ref<Resource> ResourceFormatLoaderGodotJSScript::load(const String& p_path, cons
         JSB_LOG(Error, "failed to load script resource %s", p_path);
         return {};
     }
-    spt->set_path(p_path, true);
+    // ResourceLoader owns ResourceCache registration. In particular, an IGNORE or
+    // IGNORE_DEEP load deliberately finalizes the resource with set_path_cache(),
+    // which must not leave a generated-path entry in the shared ResourceCache.
+    // Keep the resource's logical path available to GodotJS without registering
+    // the generated JavaScript alias here. For normal loads ResourceLoader will
+    // subsequently call set_path() with the authored local path.
+    spt->set_path_cache(resource_cache_path);
     if (r_error) *r_error = OK;
     return spt;
 }
