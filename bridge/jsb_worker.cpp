@@ -10,6 +10,7 @@
 #if JSB_WITH_WEB
 #include <pthread.h>
 #include <emscripten/emscripten.h>
+#include <emscripten/eventloop.h>
 #include <emscripten/threading.h>
 #include "../impl/web/jsb_web_interop.h"
 #endif
@@ -75,6 +76,7 @@ namespace jsb
     constexpr int kPostMessageFailed = -1;
     // constexpr int kPostMessageSuccess = 0;
     constexpr int kPostMessageNativeTransfersUnused = 1;
+    constexpr double kWebWorkerTickIntervalMs = 1000.0 / 60.0;
 #endif
 
     class WorkerImpl;
@@ -275,6 +277,11 @@ namespace jsb
 
         bool _web_tick()
         {
+            if (!pthread_self())
+            {
+                return false;
+            }
+
             const std::shared_ptr<Environment> env = env_;
             if (!env)
             {
@@ -299,13 +306,10 @@ namespace jsb
             return true;
         }
 
-        static void _web_loop_tick(void* p_user_data)
+        static bool _web_loop_tick(double /* p_time */, void* p_user_data)
         {
             WorkerImpl* impl = static_cast<WorkerImpl*>(p_user_data);
-            if (!impl || !impl->_web_tick())
-            {
-                emscripten_cancel_main_loop();
-            }
+            return impl && impl->_web_tick();
         }
 #else
         void _dispatch_inbox(const std::shared_ptr<Environment>& p_env, const v8::Global<v8::Object>& p_context_obj_handle)
@@ -465,7 +469,8 @@ namespace jsb
                     {
                         impl->web_last_ticks_ = 0;
                     }
-                    emscripten_set_main_loop_arg(&WorkerImpl::_web_loop_tick, impl, 0, true);
+                    emscripten_set_timeout_loop(&WorkerImpl::_web_loop_tick, kWebWorkerTickIntervalMs, impl);
+                    emscripten_unwind_to_js_event_loop();
 #else
                     while (!impl->interrupt_requested_.is_set())
                     {

@@ -174,6 +174,13 @@ if (JSWorkerParent) {
 					break;
 				}
 
+				case MessageType.Finalize: {
+					Promise.resolve().then(() => {
+						JSWorkerParent!.postMessage({ type: MessageType.Finalized });
+					});
+					break;
+				}
+
 				case MessageType.Full: {
 					const payload = message.payload;
 					assertDeepMixedGraph(payload);
@@ -357,6 +364,9 @@ if (JSWorkerParent) {
 
 				case MessageType.WorkerError:
 					fail(`unexpected worker error envelope: ${message.message}`);
+					break;
+				case MessageType.Finalized:
+					fail('unexpected finalized message sent to worker');
 					break;
 			}
 		} catch (error) {

@@ -20,6 +20,8 @@ import TransferScriptedNode from './transfer-scripted-node';
 // JSC cold-start worker boot and first round-trip can
 const WORKER_READY_TIMEOUT_MS = 5000;
 const WORKER_ROUND_TRIP_TIMEOUT_MS = 5000;
+const WORKER_FINALIZATION_STRESS_SESSIONS = 32;
+const WORKER_FINALIZATION_SETTLE_MS = 10;
 
 function fail(message: string): never {
 	throw new Error(`worker-test: ${message}`);
@@ -319,6 +321,9 @@ export default class TestWorker extends Node {
 		beginAsyncTest();
 
 		try {
+			console.log('[worker-test] finalization-stress:start');
+			await this.runFinalizationStress();
+			console.log('[worker-test] finalization-stress:done');
 			for (let workerSession = 1; workerSession <= 3; workerSession++) {
 				console.log(`[worker-test] session:${String(workerSession)}:start`);
 				await this.runWorkerSession(workerSession);
@@ -374,6 +379,59 @@ export default class TestWorker extends Node {
 				reject(error);
 			};
 		});
+	}
+
+	private async runFinalizationStress(): Promise<void> {
+		for (let workerSession = 1; workerSession <= WORKER_FINALIZATION_STRESS_SESSIONS; workerSession++) {
+			const worker = new JSWorker('tests/worker/test.worker');
+			this._worker = worker;
+			let terminated = false;
+			try {
+				await this.waitForWorkerReady(worker);
+				console.log(`[worker-test] finalization-stress:${String(workerSession)}:ready`);
+				await new Promise<void>((resolve, reject) => {
+					const timeout = setTimeout(() => {
+						reject(new Error(`worker finalization timed out after ${String(WORKER_ROUND_TRIP_TIMEOUT_MS)}ms`));
+					}, WORKER_ROUND_TRIP_TIMEOUT_MS);
+
+					worker.onmessage = (message: Message) => {
+						if (!message || typeof message !== 'object' || message instanceof GDictionary) {
+							clearTimeout(timeout);
+							reject(new Error('received malformed finalization response'));
+							return;
+						}
+						if (message.type === MessageType.WorkerError) {
+							clearTimeout(timeout);
+							reject(new Error(`worker reported error: ${message.message}`));
+							return;
+						}
+						if (message.type !== MessageType.Finalized) {
+							clearTimeout(timeout);
+							reject(new Error(`unexpected finalization response type: ${message.type}`));
+							return;
+						}
+
+						clearTimeout(timeout);
+						worker.terminate();
+						terminated = true;
+						setTimeout(resolve, WORKER_FINALIZATION_SETTLE_MS);
+					};
+					worker.onerror = (error: unknown) => {
+						clearTimeout(timeout);
+						reject(error);
+					};
+
+					console.log(`[worker-test] finalization-stress:${String(workerSession)}:posting-finalize`);
+					worker.postMessage({ type: MessageType.Finalize });
+				});
+				console.log(`[worker-test] finalization-stress:${String(workerSession)}:done`);
+			} finally {
+				if (!terminated) {
+					worker.terminate();
+				}
+				this._worker = null;
+			}
+		}
 	}
 
 	private runFullRoundTrip(worker: JSWorker, transferType: TransferType): Promise<void> {

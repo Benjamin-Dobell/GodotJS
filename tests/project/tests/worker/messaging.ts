@@ -59,6 +59,8 @@ export enum MessageType {
 	Full = 'full',
 	Dictionary = 'dictionary',
 	Plain = 'plain',
+	Finalize = 'finalize',
+	Finalized = 'finalized',
 	WorkerError = 'workerError',
 }
 
@@ -91,7 +93,21 @@ export type WorkerErrorMessage = {
 	message: string;
 };
 
-export type Message = FullPayloadMessage | DictionaryMessage | PlainMessage | WorkerErrorMessage;
+export type FinalizeMessage = {
+	type: MessageType.Finalize;
+};
+
+export type FinalizedMessage = {
+	type: MessageType.Finalized;
+};
+
+export type Message =
+	| FullPayloadMessage
+	| DictionaryMessage
+	| PlainMessage
+	| FinalizeMessage
+	| FinalizedMessage
+	| WorkerErrorMessage;
 
 export function buildGodotTransferList(
 	values: readonly GAny[]
