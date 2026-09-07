@@ -695,7 +695,7 @@ bool GodotJSExportPlugin::export_module_files(const jsb::JavaScriptModule& p_mod
 
 bool GodotJSExportPlugin::export_compiled_script(const String& p_path, bool p_remap)
 {
-    static constexpr char kNodeModulesPrefix[] = u8"res://node_modules/";
+    static constexpr char kNodeModulesPrefix[] = "res://node_modules/";
 
     if (p_path.is_empty() || exported_paths_.has(p_path))
     {

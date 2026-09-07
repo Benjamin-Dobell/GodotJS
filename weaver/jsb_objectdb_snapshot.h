@@ -12,7 +12,8 @@ protected:
 
 public:
 	static Dictionary capture_to_file(const String &p_snapshot_file_path, const Dictionary &p_snapshot_context = Dictionary());
-	static Dictionary capture_bridge_snapshot(bool p_include_live_entries = true, int p_max_entries = 0);
+    static Dictionary capture_bridge_snapshot(bool p_include_live_entries = true, int p_max_entries = 0);
+    static Dictionary capture_pixel_memory_snapshot(bool p_include_allocator = false);
 	static Dictionary capture_bridge_snapshot_to_file(const String &p_report_file_path, bool p_include_live_entries = true, int p_max_entries = 0);
 };
 

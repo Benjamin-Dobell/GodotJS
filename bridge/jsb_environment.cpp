@@ -29,6 +29,8 @@
 #endif
 #include "main/performance.h"
 #include "core/io/resource_loader.h"
+#include "core/io/image.h"
+#include "core/variant/variant_internal.h"
 #include "core/os/thread_safe.h"
 #include "scene/main/node.h"
 
@@ -39,6 +41,7 @@
 
 #if JSB_WITH_WEB
 #include "../impl/web/jsb_web_interop.h"
+#include <malloc.h>
 #endif
 
 #if !JSB_WITH_STATIC_BINDINGS
@@ -506,7 +509,7 @@ namespace jsb
 #else
         // Users may consume editor APIs in codegen functions. However, we want to permit regular ES6 import syntax.
         // We provide a dummy module that can be imported (but not used) in runtime-only builds.
-        static constexpr char kDummyModule[] = u8"(function(define){define('jsb.editor.codegen',[],function(){return{}})})";
+        static constexpr char kDummyModule[] = "(function(define){define('jsb.editor.codegen',[],function(){return{}})})";
         AMDModuleLoader::load_source(this, kDummyModule, sizeof(kDummyModule) - 1, kEditorBundleFile);
 #endif
 
@@ -1548,6 +1551,114 @@ namespace jsb
         snapshot["live_entries"] = live_entries;
         return snapshot;
 #endif
+    }
+
+    Dictionary Environment::get_pixel_memory_snapshot(bool p_include_allocator) const
+    {
+        check_internal_state();
+        Dictionary result;
+        result["version"] = 2;
+        result["environment_id"] = (uint64_t)(uintptr_t) id();
+        result["thread_id"] = (uint64_t) thread_id_;
+        result["is_worker"] = (flags_ & EF_Worker) != 0;
+#if defined(DEBUG_ENABLED) && JSB_WITH_WEB
+        result["supported"] = true;
+        result["native_live_bytes"] = Memory::get_mem_usage();
+        result["native_peak_bytes"] = Memory::get_mem_max_usage();
+        // mallinfo scans under the allocator lock. Request it from one realm
+        // only, separately from cheap per-environment ownership snapshots.
+        if (p_include_allocator)
+        {
+            const struct mallinfo allocation = mallinfo();
+            result["malloc_inuse_bytes"] = (uint64_t)allocation.uordblks;
+            result["malloc_free_bytes"] = (uint64_t)allocation.fordblks;
+            result["malloc_arena_bytes"] = (uint64_t)allocation.arena;
+            result["malloc_free_chunks"] = (uint64_t)allocation.ordblks;
+        }
+
+        struct BackingInfo
+        {
+            uint64_t bytes = 0;
+            uint64_t capacity = 0;
+            uint32_t image_owners = 0;
+            uint32_t packed_owners = 0;
+        };
+        HashMap<uint64_t, BackingInfo> backings;
+        uint64_t image_count = 0;
+        uint64_t packed_count = 0;
+        uint64_t image_bytes = 0;
+        uint64_t packed_bytes = 0;
+        auto record = [&](const uint8_t* p_pointer, uint64_t p_bytes, uint64_t p_capacity, bool p_image)
+        {
+            if (p_bytes == 0) return;
+            const uint64_t key = (uint64_t)(uintptr_t) p_pointer;
+            BackingInfo& backing = backings[key];
+            backing.bytes = p_bytes;
+            backing.capacity = p_capacity;
+            if (p_image) ++backing.image_owners;
+            else ++backing.packed_owners;
+        };
+
+        // get_data() below is a temporary native COW alias, not a pixel copy.
+        // It is needed to read reserved capacity and is destroyed in this
+        // iteration. No Ref<Image> or pixel owner survives the census call.
+        // Each environment samples on its owner thread without running JS.
+        Vector<Pair<void*, NativeObjectID>> entries;
+        object_db_.copy_entries(entries);
+        for (const Pair<void*, NativeObjectID>& pair : entries)
+        {
+            const ObjectHandleConstPtr handle = object_db_.try_get_object(pair.second);
+            if (!handle) continue;
+            const NativeClassInfo& class_info = native_classes_.get_value(handle->class_id);
+            if (class_info.type != NativeClassType::GodotObject) continue;
+            const Image* image = Object::cast_to<Image>((Object*)pair.first);
+            if (!image) continue;
+            const uint64_t bytes = image->get_data_size();
+            ++image_count;
+            image_bytes += bytes;
+            const Vector<uint8_t> pixels = image->get_data();
+            record(pixels.ptr(), bytes, pixels.capacity(), true);
+        }
+
+        const auto& variants = variant_allocator_.get_live_variants();
+        for (const Variant* value : variants)
+        {
+            if (value->get_type() != Variant::PACKED_BYTE_ARRAY) continue;
+            const PackedByteArray* packed = VariantInternal::get_byte_array(value);
+            ++packed_count;
+            packed_bytes += packed->size();
+            record(packed->ptr(), packed->size(), packed->capacity(), false);
+        }
+
+        Array backing_entries;
+        uint64_t unique_bytes = 0;
+        uint64_t unique_capacity = 0;
+        for (const KeyValue<uint64_t, BackingInfo>& item : backings)
+        {
+            Dictionary entry;
+            entry["pointer"] = item.key;
+            entry["bytes"] = item.value.bytes;
+            entry["capacity"] = item.value.capacity;
+            entry["image_owners"] = item.value.image_owners;
+            entry["packed_owners"] = item.value.packed_owners;
+            backing_entries.push_back(entry);
+            unique_bytes += item.value.bytes;
+            unique_capacity += item.value.capacity;
+        }
+        result["image_count"] = image_count;
+        result["image_alias_bytes"] = image_bytes;
+        result["packed_count"] = packed_count;
+        result["packed_alias_bytes"] = packed_bytes;
+        result["unique_pixel_bytes"] = unique_bytes;
+        result["unique_pixel_capacity"] = unique_capacity;
+        result["variant_count"] = variants.size();
+        result["backings"] = backing_entries;
+#else
+        jsb_unused(p_include_allocator);
+        result["supported"] = false;
+        result["reason"] = "Pixel ownership census requires a debug Web build.";
+#endif
+        return result;
     }
 
     ObjectCacheID Environment::get_cached_function(const v8::Local<v8::Function>& p_func)
@@ -2993,12 +3104,14 @@ namespace jsb
 
                 if (!script_instance)
                 {
-                    JSB_LOG(Error, "failed to instantiate transferred script for object %d: %s", (uint64_t) object_id, p_data.script_path);
+                    JSB_LOG(Error, "failed to instantiate transferred script for object %d: %s",
+                        (uint64_t) object_id, p_data.script_path);
                 }
             }
             else
             {
-                JSB_LOG(Error, "failed to load transferred script for object %d: %s", (uint64_t) object_id, p_data.script_path);
+                JSB_LOG(Error, "failed to load transferred script for object %d: %s",
+                    (uint64_t) object_id, p_data.script_path);
             }
         }
 
@@ -3052,7 +3165,8 @@ namespace jsb
 
             if (!script.is_valid())
             {
-                JSB_LOG(Error, "failed to load transferred script for object %d: %s", (uint64_t) object_id, p_data.script_path);
+                JSB_LOG(Error, "failed to load transferred script for object %d: %s",
+                    (uint64_t) object_id, p_data.script_path);
                 return;
             }
 

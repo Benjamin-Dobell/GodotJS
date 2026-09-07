@@ -3,6 +3,7 @@
 
 #include "jsb_internal_pch.h"
 #include "jsb_macros.h"
+#include "core/templates/hash_set.h"
 
 namespace jsb::internal
 {
@@ -12,6 +13,12 @@ namespace jsb::internal
         Vector<Variant*> front_;
         Vector<Variant*> back_;
         SpinLock spin_lock_;
+
+#if defined(DEBUG_ENABLED) && JSB_WITH_WEB
+        // Non-owning diagnostic index. Web allocation/finalization and sampling
+        // run on this allocator's owner thread; no payload references are held.
+        HashSet<const Variant*> live_variants_;
+#endif
 
 #if JSB_DEBUG
         SafeNumeric<uint32_t> alive_variants_num_;
@@ -51,10 +58,29 @@ namespace jsb::internal
             return rval;
         }
 
-        jsb_force_inline Variant* alloc() { increment(); return paged_allocator_.alloc(); }
+        jsb_force_inline Variant* alloc()
+        {
+            increment();
+            Variant* value = paged_allocator_.alloc();
+#if defined(DEBUG_ENABLED) && JSB_WITH_WEB
+            live_variants_.insert(value);
+#endif
+            return value;
+        }
 
         //NOTE safe to call from other threads only if p_var is not reference-based type
-        jsb_force_inline void free(Variant* p_var) { decrement(); paged_allocator_.free(p_var); }
+        jsb_force_inline void free(Variant* p_var)
+        {
+#if defined(DEBUG_ENABLED) && JSB_WITH_WEB
+            live_variants_.erase(p_var);
+#endif
+            decrement();
+            paged_allocator_.free(p_var);
+        }
+
+#if defined(DEBUG_ENABLED) && JSB_WITH_WEB
+        const HashSet<const Variant*>& get_live_variants() const { return live_variants_; }
+#endif
 
         // gc thread
         void free_safe(Variant* p_var)

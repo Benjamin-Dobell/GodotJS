@@ -13,6 +13,11 @@ void GodotJSObjectDBSnapshot::_bind_methods()
 {
 	ClassDB::bind_static_method(
 			jsb_typename(GodotJSObjectDBSnapshot),
+			D_METHOD("capture_pixel_memory_snapshot", "include_allocator"),
+			&GodotJSObjectDBSnapshot::capture_pixel_memory_snapshot,
+			DEFVAL(false));
+	ClassDB::bind_static_method(
+			jsb_typename(GodotJSObjectDBSnapshot),
 			D_METHOD("capture_to_file", "snapshot_file_path", "snapshot_context"),
 			&GodotJSObjectDBSnapshot::capture_to_file,
 			DEFVAL(Dictionary()));
@@ -28,6 +33,13 @@ void GodotJSObjectDBSnapshot::_bind_methods()
 			&GodotJSObjectDBSnapshot::capture_bridge_snapshot_to_file,
 			DEFVAL(true),
 			DEFVAL(0));
+}
+
+Dictionary GodotJSObjectDBSnapshot::capture_pixel_memory_snapshot(bool p_include_allocator)
+{
+	const std::shared_ptr<jsb::Environment> env = jsb::Environment::_access();
+	ERR_FAIL_COND_V_MSG(!env, Dictionary(), "No active GodotJS Environment for current thread/isolate.");
+	return env->get_pixel_memory_snapshot(p_include_allocator);
 }
 
 Dictionary GodotJSObjectDBSnapshot::capture_to_file(const String &p_snapshot_file_path, const Dictionary &p_snapshot_context)

@@ -691,6 +691,7 @@ namespace jsb
 
         void get_statistics(Statistics& r_stats) const;
         Dictionary get_object_origin_snapshot(bool p_include_live_entries = true, int p_max_entries = 0) const;
+        Dictionary get_pixel_memory_snapshot(bool p_include_allocator) const;
 
 #if JSB_WITH_DEBUGGER
 
