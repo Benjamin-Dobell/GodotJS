@@ -46,6 +46,7 @@ const enum jsbb_NumericValueKind {
     None,
     Int32,
     Number,
+    Uint32,
     Num,
 }
 
@@ -550,6 +551,33 @@ function jsbb_IsTraceable(o: any): boolean {
 
 function jsbb_ensure(condition: boolean) {
     console.assert(condition);
+}
+
+// Appends a //# sourceURL= trailer identifying eval'd source to the debugger.
+// V8 (Chrome) already resolves an embedded //# sourceMappingURL= trailer on an
+// anonymous eval'd script without this, but WebKit/JSC (Safari) does not: an
+// eval() with no sourceURL is bucketed as an anonymous "VM script" and its
+// sourceMappingURL trailer is not resolved, so no original TypeScript is shown.
+//
+// The value matters too. Module filenames arrive as Godot's virtual filesystem
+// paths (res://...), a scheme no browser recognises as belonging to the page's
+// own origin. Safari's Web Inspector still attributes the script under that
+// sourceURL, but since it isn't a real same-origin URL it can't be placed in
+// the page's normal per-origin resource tree, so every eval'd script (there
+// can be 1000+) ends up dumped into one flat, unsorted "Extra Scripts" bucket
+// instead. Rewriting it to a same-origin-looking absolute URL under a fixed
+// /__godotjs/ prefix (mirroring the existing V8/Chrome sourceMappingURL
+// rewrite in scripts/rewrite-godotjs-sourcemap-urls.mjs) lets it slot into the
+// real per-origin tree with folder nesting instead. Nothing is ever fetched
+// from this URL: sourceURL is inert debugger metadata, and sourceMappingURL is
+// already an inline data: URI, so there's no dependency on the path resolving
+// to a real resource.
+function jsbb_with_source_url(source: string, filename: string): string {
+    const relative_path = filename.replace(/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//, "");
+    const origin = typeof self !== "undefined" && self.location ? self.location.origin : "";
+    const absolute_url = `${origin}/__godotjs/${relative_path}`;
+    const safe_filename = absolute_url.replace(/[\r\n]/g, "");
+    return `${source}\n//# sourceURL=${safe_filename}`;
 }
 
 const jsbb_console = {
@@ -1185,9 +1213,19 @@ class jsbb_Engine {
             _jsbb_.i32[o_kind_ptr >> 2] = jsbb_NumericValueKind.None;
             return 0;
         }
-        if (Number.isInteger(val)) {
+        if (Number.isInteger(val)
+            && !Object.is(val, -0)
+            && val >= -2147483648
+            && val <= 2147483647) {
             _jsbb_.i32[o_kind_ptr >> 2] = jsbb_NumericValueKind.Int32;
             return val | 0;
+        }
+        if (Number.isInteger(val)
+            && !Object.is(val, -0)
+            && val >= 0
+            && val <= 4294967295) {
+            _jsbb_.i32[o_kind_ptr >> 2] = jsbb_NumericValueKind.Uint32;
+            return val;
         }
         _jsbb_.i32[o_kind_ptr >> 2] = jsbb_NumericValueKind.Number;
         return val;
@@ -1633,7 +1671,10 @@ class jsbb_Engine {
                 return jsbb_StackPos.Error;
             }
             jsbb_console.trace("compile function source:", source);
-            rval = (0, eval)(source);
+            // See jsbb_with_source_url for why this is appended and rewritten to a
+            // same-origin-looking URL.
+            const filename = _jsbb_.wasmop.UTF8ToString(filename_ptr);
+            rval = (0, eval)(jsbb_with_source_url(source, filename));
         } catch (err) {
             if (err instanceof EvalError && typeof document !== "undefined") {
                 jsbb_console.warn("eval not supported (CSP restriction), trying script element instead");
@@ -1685,7 +1726,11 @@ class jsbb_Engine {
                 this._throw(new Error("source is null"));
                 return jsbb_StackPos.Error;
             }
-            rval = (0, eval)(source);
+            // See jsbb_with_source_url: without a //# sourceURL trailer, WebKit/JSC
+            // (Safari) does not resolve an embedded //# sourceMappingURL trailer for
+            // an eval'd script.
+            const filename = _jsbb_.wasmop.UTF8ToString(filename_ptr);
+            rval = (0, eval)(jsbb_with_source_url(source, filename));
         } catch (err) {
             // it's difficult to emulate the behaviour of eval with script element (get the result without 'return').
             // just throw error for easier life.

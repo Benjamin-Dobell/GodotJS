@@ -3,6 +3,7 @@ const GodotJSBrowserInterface = {
     // $GodotJSBrowserInterface__deps: ['$GodotRuntime'],
     // $GodotJSBrowserInterface: {},
 
+    jsbi_init__deps: ['$GodotJSFileSystem'],
     "jsbi_init": function (gc_callback, unhandled_rejection, call_function, call_accessor, generate_internal_data, on_worker_message, on_worker_message_from_pthread, worker_get_or_add_native_transfer, set_web_bridge_profile_enabled, debug_build, bridge_logging) {
         return _jsbb_.init({
             gc_callback,
@@ -198,14 +199,21 @@ const GodotJSBrowserInterface = {
         const engine = _jsbb_.GetEngine(engine_id);
         engine.CountWebBridgeOperation(50 /* jsbb_WebBridgeCounter.TypeIsInt32 */);
         const val = engine.stack.GetValue(stack_pos);
-        return typeof val === "number" && Number.isInteger(val);
+        return typeof val === "number"
+            && Number.isInteger(val)
+            && !Object.is(val, -0)
+            && val >= -2147483648
+            && val <= 2147483647;
     },
-    // not really supported
     "jsbi_IsUint32": function (engine_id, stack_pos) {
         const engine = _jsbb_.GetEngine(engine_id);
         engine.CountWebBridgeOperation(51 /* jsbb_WebBridgeCounter.TypeIsUint32 */);
         const val = engine.stack.GetValue(stack_pos);
-        return typeof val === "number" && Number.isInteger(val);
+        return typeof val === "number"
+            && Number.isInteger(val)
+            && !Object.is(val, -0)
+            && val >= 0
+            && val <= 4294967295;
     },
 
     "jsbi_IsPromise": function (engine_id, stack_pos) {

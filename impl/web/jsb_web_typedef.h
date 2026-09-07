@@ -11,6 +11,7 @@ namespace jsb::impl
         None,
         Int32,
         Number,
+        Uint32,
         Num,
     };
 

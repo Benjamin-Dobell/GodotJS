@@ -500,6 +500,9 @@ namespace jsb
         case impl::WebNumericValueKind::Number:
             r_cvar = numeric_value;
             return true;
+        case impl::WebNumericValueKind::Uint32:
+            r_cvar = (uint32_t) numeric_value;
+            return true;
         case impl::WebNumericValueKind::Num:
             jsb_check(false);
             return false;

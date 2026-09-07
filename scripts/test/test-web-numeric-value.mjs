@@ -11,6 +11,7 @@ const moduleRoot = resolve(testDirectory, "../..");
 const typeConvertPath = join(moduleRoot, "bridge/jsb_type_convert.cpp");
 const typedefPath = join(moduleRoot, "impl/web/jsb_web_typedef.h");
 const interopPath = join(moduleRoot, "impl/web/jsb_web_interop.h");
+const webHelperPath = join(moduleRoot, "impl/web/jsb_web_helper.h");
 const dataHeaderPath = join(moduleRoot, "impl/web/jsb_web_data.h");
 const dataSourcePath = join(moduleRoot, "impl/web/jsb_web_data.cpp");
 const monolithPath = join(moduleRoot, "impl/web/bridge/src/monolith.ts");
@@ -19,6 +20,7 @@ const libraryPath = join(moduleRoot, "impl/web/js/library_godotjs_jsbi.js");
 const typeConvertSource = readFileSync(typeConvertPath, "utf8");
 const typedefSource = readFileSync(typedefPath, "utf8");
 const interopSource = readFileSync(interopPath, "utf8");
+const webHelperSource = readFileSync(webHelperPath, "utf8");
 const dataHeaderSource = readFileSync(dataHeaderPath, "utf8");
 const dataSource = readFileSync(dataSourcePath, "utf8");
 const monolithSource = readFileSync(monolithPath, "utf8");
@@ -46,7 +48,7 @@ function enumMembers(source, enumName) {
         .map((entry) => entry.split("=")[0].trim());
 }
 
-const expectedKinds = ["None", "Int32", "Number", "Num"];
+const expectedKinds = ["None", "Int32", "Number", "Uint32", "Num"];
 assert.deepEqual(enumMembers(typedefSource, "WebNumericValueKind"), expectedKinds);
 assert.deepEqual(enumMembers(monolithSource, "jsbb_NumericValueKind"), expectedKinds);
 assert.match(
@@ -66,6 +68,14 @@ assert.match(
     dataHeaderSource,
     /jsb::impl::WebNumericValueKind GetNumericValue\(double& r_value\) const;/,
 );
+const typedIntHelperSource = sourceBetween(
+    webHelperSource,
+    "static bool to_int64(",
+    "static v8::Local<v8::Value> new_integer",
+);
+assert.match(typedIntHelperSource, /p_val->IsInt32\(\)/);
+assert.match(typedIntHelperSource, /p_val->IsNumber\(\)/);
+assert.match(typedIntHelperSource, /p_val\.As<v8::Number>\(\)->Value\(\)/);
 
 const dataMethodSource = sourceBetween(
     dataSource,
@@ -113,6 +123,8 @@ assert.equal(webNumericSource.match(/GetNumericValue/g)?.length ?? 0, 1);
 assert.doesNotMatch(webNumericSource, /IsInt32|IsUint32|IsNumber|Int32::Value|Uint32::Value|Number::Value/);
 assert.match(webNumericSource, /WebNumericValueKind::Int32/);
 assert.match(webNumericSource, /WebNumericValueKind::Number/);
+assert.match(webNumericSource, /WebNumericValueKind::Uint32/);
+assert.match(webNumericSource, /r_cvar = \(uint32_t\) numeric_value/);
 assert.match(
     nativeNumericSource,
     /IsInt32\(\)[\s\S]*As<v8::Int32>\(\)->Value\(\)[\s\S]*IsUint32\(\)[\s\S]*As<v8::Uint32>\(\)->Value\(\)[\s\S]*IsNumber\(\)[\s\S]*As<v8::Number>\(\)->Value\(\)/,
@@ -237,14 +249,12 @@ const kind = {
     None: 0,
     Int32: 1,
     Number: 2,
+    Uint32: 3,
 };
 
-function oldNumericResult(stackPosition) {
+function typedIntReferenceResult(stackPosition) {
     if (bridge.jsbi_IsInt32(0, stackPosition)) {
         return { kind: kind.Int32, value: bridge.jsbi_Int32Value(0, stackPosition) };
-    }
-    if (bridge.jsbi_IsUint32(0, stackPosition)) {
-        throw new Error("the duplicate Web Uint32 branch must remain unreachable");
     }
     if (bridge.jsbi_IsNumber(0, stackPosition)) {
         return { kind: kind.Number, value: bridge.jsbi_NumberValue(0, stackPosition) };
@@ -259,6 +269,16 @@ function compoundNumericResult(stackPosition) {
         kind: context.HEAP32[kindPointer >> 2],
         value,
     };
+}
+
+function expectedUntypedVariantResult(value, isSigned32Integer, isUint32Integer, isNumber) {
+    if (!isNumber) {
+        return { type: "none", value: 0 };
+    }
+    if (isSigned32Integer || isUint32Integer) {
+        return { type: "int", value };
+    }
+    return { type: "float", value };
 }
 
 function assertSameNumericResult(name, actual, expected) {
@@ -306,6 +326,7 @@ const cases = [
     ["uint32 start", 2147483648],
     ["uint32 max", 4294967295],
     ["above uint32", 4294967296],
+    ["epoch milliseconds", 1700000000000],
     ["max safe integer", Number.MAX_SAFE_INTEGER],
     ["min safe integer", Number.MIN_SAFE_INTEGER],
     ["positive fraction", 1.5],
@@ -334,12 +355,65 @@ const cases = [
 for (const [name, value] of cases) {
     const stackPosition = fixture.push(value);
 
+    const isNumber = typeof value === "number";
+    const isNonNegativeInteger = isNumber
+        && Number.isInteger(value)
+        && !Object.is(value, -0)
+        && value >= 0
+        && value <= 4294967295;
+    const isSigned32Integer = isNumber
+        && Number.isInteger(value)
+        && !Object.is(value, -0)
+        && value >= -2147483648
+        && value <= 2147483647;
+    assert.equal(
+        bridge.jsbi_IsInt32(0, stackPosition),
+        isSigned32Integer,
+        `${name}: signed 32-bit classification`,
+    );
+    assert.equal(
+        bridge.jsbi_IsUint32(0, stackPosition),
+        isNonNegativeInteger,
+        `${name}: unsigned 32-bit classification`,
+    );
+    assert.equal(bridge.jsbi_IsNumber(0, stackPosition), isNumber, `${name}: number classification`);
+
     assert.equal(profiler.reset(0), true);
-    const oldResult = oldNumericResult(stackPosition);
+    const typedIntResult = typedIntReferenceResult(stackPosition);
+    const expectedTypedIntResult = isNumber
+        ? {
+            kind: isSigned32Integer ? kind.Int32 : kind.Number,
+            value: isSigned32Integer ? value | 0 : value,
+        }
+        : { kind: kind.None, value: 0 };
+    assertSameNumericResult(name, typedIntResult, expectedTypedIntResult);
 
     assert.equal(profiler.reset(0), true);
     const newResult = compoundNumericResult(stackPosition);
-    assertSameNumericResult(name, newResult, oldResult);
+    const expectedUntypedResult = isNumber
+        ? {
+            kind: isSigned32Integer
+                ? kind.Int32
+                : isNonNegativeInteger && value >= 2147483648
+                    ? kind.Uint32
+                    : kind.Number,
+            value,
+        }
+        : { kind: kind.None, value: 0 };
+    assertSameNumericResult(name, newResult, expectedUntypedResult);
+    const expectedVariantResult = expectedUntypedVariantResult(
+        value,
+        isSigned32Integer,
+        isNonNegativeInteger && value >= 2147483648,
+        isNumber,
+    );
+    const actualVariantResult = newResult.kind === kind.Int32 || newResult.kind === kind.Uint32
+        ? { type: "int", value: newResult.value }
+        : newResult.kind === kind.Number
+            ? { type: "float", value: newResult.value }
+            : { type: "none", value: 0 };
+    assert.equal(actualVariantResult.type, expectedVariantResult.type, `${name}: untyped Variant type`);
+    assert.ok(Object.is(actualVariantResult.value, expectedVariantResult.value), `${name}: untyped Variant value`);
 
     const counters = profiler.snapshot(0).counters;
     assert.equal(counters.value_numeric, 1, `${name}: exactly one compound operation`);
