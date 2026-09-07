@@ -135,6 +135,29 @@ namespace jsb::tests
         CHECK(object_db.has_object(native_pointer));
         CHECK(object_db.has_object(object_id));
 
+        {
+            ObjectHandlePtr destructor_handle = object_db.try_get_object(native_pointer);
+            REQUIRE(destructor_handle);
+        }
+
+        {
+            ObjectHandlePtr source_handle = object_db.try_get_object(native_pointer);
+            REQUIRE(source_handle);
+            ObjectHandlePtr move_constructed_handle(std::move(source_handle));
+            CHECK(!source_handle);
+            REQUIRE(move_constructed_handle);
+            move_constructed_handle = nullptr;
+        }
+
+        {
+            ObjectHandlePtr source_handle = object_db.try_get_object(native_pointer);
+            REQUIRE(source_handle);
+            ObjectHandlePtr move_assigned_handle;
+            move_assigned_handle = std::move(source_handle);
+            CHECK(!source_handle);
+            REQUIRE(move_assigned_handle);
+        }
+
         object_handle = object_db.try_get_object(native_pointer);
         REQUIRE(object_handle);
 
@@ -143,6 +166,113 @@ namespace jsb::tests
         CHECK(!object_handle);
         CHECK(!object_db.has_object(native_pointer));
         CHECK(!object_db.has_object(object_id));
+    }
+
+    TEST_CASE("[jsb] ObjectDB concurrent readers and writer")
+    {
+        ObjectDB object_db(4);
+        const ObjectDB& read_only_object_db = object_db;
+        int native_object = 0;
+        void* native_pointer = &native_object;
+
+        ObjectHandlePtr initial_handle;
+        object_db.add_object(native_pointer, &initial_handle);
+        REQUIRE(initial_handle);
+#if JSB_DEBUG
+        initial_handle->pointer = native_pointer;
+#endif
+        initial_handle = nullptr;
+
+        static constexpr int kReaderCount = 8;
+        static constexpr int kWriterIterations = 25000;
+        std::atomic<int> ready_count = 0;
+        std::atomic<int> failures = 0;
+        std::atomic<bool> start = false;
+        std::atomic<bool> writer_finished = false;
+        std::vector<std::thread> readers;
+        readers.reserve(kReaderCount);
+
+        for (int reader_index = 0; reader_index < kReaderCount; ++reader_index)
+        {
+            readers.emplace_back([&, reader_index]()
+            {
+                int release_path = reader_index;
+                ready_count.fetch_add(1, std::memory_order_relaxed);
+                while (!start.load(std::memory_order_acquire))
+                {
+                    std::this_thread::yield();
+                }
+
+                while (!writer_finished.load(std::memory_order_acquire))
+                {
+                    ObjectHandleConstPtr handle = read_only_object_db.try_get_object(native_pointer);
+                    if (handle)
+                    {
+                        switch (release_path++ % 3)
+                        {
+                            case 0:
+                                // Exercise destructor release with a live scoped pointer.
+                                break;
+                            case 1:
+                                handle = nullptr;
+                                break;
+                            default:
+                            {
+                                ObjectHandleConstPtr moved_handle;
+                                moved_handle = std::move(handle);
+                                if (!moved_handle || handle)
+                                {
+                                    failures.fetch_add(1, std::memory_order_relaxed);
+                                }
+                                moved_handle = nullptr;
+                                break;
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        while (ready_count.load(std::memory_order_acquire) != kReaderCount)
+        {
+            std::this_thread::yield();
+        }
+        start.store(true, std::memory_order_release);
+
+        for (int iteration = 0; iteration < kWriterIterations; ++iteration)
+        {
+            ObjectHandlePtr handle = object_db.try_get_object(native_pointer);
+            if (!handle)
+            {
+                failures.fetch_add(1, std::memory_order_relaxed);
+                continue;
+            }
+            object_db.remove_object(handle, native_pointer);
+
+            ObjectHandlePtr replacement_handle;
+            object_db.add_object(native_pointer, &replacement_handle);
+            if (!replacement_handle)
+            {
+                failures.fetch_add(1, std::memory_order_relaxed);
+                continue;
+            }
+#if JSB_DEBUG
+            replacement_handle->pointer = native_pointer;
+#endif
+            replacement_handle = nullptr;
+        }
+
+        writer_finished.store(true, std::memory_order_release);
+        for (std::thread& reader : readers)
+        {
+            reader.join();
+        }
+
+        CHECK(failures.load(std::memory_order_relaxed) == 0);
+        ObjectHandlePtr final_handle = object_db.try_get_object(native_pointer);
+        REQUIRE(final_handle);
+        object_db.remove_object(final_handle, native_pointer);
+        CHECK(!object_db.has_object(native_pointer));
     }
 
     TEST_CASE("[jsb] raw isolate essential tests")

@@ -31,6 +31,13 @@ namespace jsb
         // Release slot address scope while preserving ObjectDB write lock.
         jsb_force_inline void prepare_for_removal() { ptr_ = nullptr; }
 
+        jsb_force_inline void reset()
+        {
+            ptr_ = nullptr;
+            if (lock_) lock_->write_unlock();
+            lock_ = nullptr;
+        }
+
     public:
         ObjectHandlePtr(const ObjectHandlePtr&) = delete;
 
@@ -42,7 +49,7 @@ namespace jsb
 
         ~ObjectHandlePtr()
         {
-            if (lock_) lock_->write_unlock();
+            reset();
         }
 
         ObjectHandle* operator->() const { return ptr_.operator->(); }
@@ -50,9 +57,7 @@ namespace jsb
 
         ObjectHandlePtr& operator=(std::nullptr_t)
         {
-            if (lock_) lock_->write_unlock();
-            lock_ = nullptr;
-            ptr_ = nullptr;
+            reset();
             return *this;
         }
 
@@ -66,7 +71,7 @@ namespace jsb
         {
             if (this != &p_other)
             {
-                if (lock_) lock_->write_unlock();
+                reset();
                 lock_ = p_other.lock_;
                 ptr_ = std::move(p_other.ptr_);
                 p_other.lock_ = nullptr;
@@ -81,6 +86,13 @@ namespace jsb
         const RWLock* lock_;
         internal::SArray<ObjectHandle, NativeObjectID>::ConstPointer ptr_;
 
+        jsb_force_inline void reset()
+        {
+            ptr_ = nullptr;
+            if (lock_) lock_->read_unlock();
+            lock_ = nullptr;
+        }
+
     public:
         ObjectHandleConstPtr(const ObjectHandleConstPtr&) = delete;
 
@@ -92,16 +104,14 @@ namespace jsb
 
         ~ObjectHandleConstPtr()
         {
-            if (lock_) lock_->read_unlock();
+            reset();
         }
 
         const ObjectHandle* operator->() const { return ptr_.operator->(); }
         explicit operator bool() const { return (bool) ptr_; }
         ObjectHandleConstPtr& operator=(std::nullptr_t)
         {
-            if (lock_) lock_->read_unlock();
-            lock_ = nullptr;
-            ptr_ = nullptr;
+            reset();
             return *this;
         }
 
@@ -115,7 +125,7 @@ namespace jsb
         {
             if (this != &p_other)
             {
-                if (lock_) lock_->read_unlock();
+                reset();
                 lock_ = p_other.lock_;
                 ptr_ = std::move(p_other.ptr_);
                 p_other.lock_ = nullptr;

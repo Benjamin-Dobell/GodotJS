@@ -3,6 +3,10 @@
 
 #include "jsb_test_helpers.h"
 
+#include <atomic>
+#include <thread>
+#include <vector>
+
 // all internal::SArray test cases
 namespace jsb::tests
 {
@@ -123,7 +127,86 @@ namespace jsb::tests
             sarray.clear();
         }
     }
+
+    TEST_CASE("[jsb.internal] SArray concurrent scoped readers")
+    {
+        internal::SArray<int> sarray;
+        const internal::Index64 value_id = sarray.add(42);
+        const internal::SArray<int>& read_only_sarray = sarray;
+
+        static constexpr int kThreadCount = 8;
+        static constexpr int kIterationsPerThread = 100000;
+        std::atomic<int> ready_count = 0;
+        std::atomic<int> failures = 0;
+        std::atomic<bool> start = false;
+        std::vector<std::thread> readers;
+        readers.reserve(kThreadCount);
+
+        for (int thread_index = 0; thread_index < kThreadCount; ++thread_index)
+        {
+            readers.emplace_back([&]()
+            {
+                ready_count.fetch_add(1, std::memory_order_relaxed);
+                while (!start.load(std::memory_order_acquire))
+                {
+                    std::this_thread::yield();
+                }
+
+                for (int iteration = 0; iteration < kIterationsPerThread; ++iteration)
+                {
+                    auto value = read_only_sarray.get_value_scoped(value_id);
+                    if (!value || *value != 42)
+                    {
+                        failures.fetch_add(1, std::memory_order_relaxed);
+                    }
+
+                    switch (iteration % 4)
+                    {
+                        case 0:
+                            // Exercise destructor release with a live scoped pointer.
+                            break;
+                        case 1:
+                            value = nullptr;
+                            break;
+                        case 2:
+                        {
+                            auto moved_value = std::move(value);
+                            if (!moved_value || value || *moved_value != 42)
+                            {
+                                failures.fetch_add(1, std::memory_order_relaxed);
+                            }
+                            break;
+                        }
+                        default:
+                        {
+                            auto copied_value = value;
+                            if (!copied_value || *copied_value != 42)
+                            {
+                                failures.fetch_add(1, std::memory_order_relaxed);
+                            }
+                            copied_value = nullptr;
+                            value = nullptr;
+                            break;
+                        }
+                    }
+                }
+            });
+        }
+
+        while (ready_count.load(std::memory_order_acquire) != kThreadCount)
+        {
+            std::this_thread::yield();
+        }
+        start.store(true, std::memory_order_release);
+
+        for (std::thread& reader : readers)
+        {
+            reader.join();
+        }
+
+        CHECK(failures.load(std::memory_order_relaxed) == 0);
+        CHECK(sarray.remove_at(value_id));
+    }
 }
 
 #endif
-

@@ -7,6 +7,7 @@
 #include "jsb_ansi_allocator.h"
 #include "jsb_sindex.h"
 
+#include <atomic>
 #include <cstddef>
 
 namespace jsb::internal
@@ -49,7 +50,9 @@ namespace jsb::internal
         int _first_index = -1;
         int _last_index = -1;
 #if JSB_WITH_CHECK
-        int _address_locked = 0;
+        // Externally synchronized containers can have concurrent scoped readers.
+        // This counter is only an address-stability guard; it does not make SArray thread-safe.
+        std::atomic<int> _address_locked = 0;
 #endif
         AllocatorType allocator;
 
@@ -707,7 +710,7 @@ namespace jsb::internal
 
         bool remove_at(const IndexType& p_index)
         {
-            jsb_check(_address_locked == 0);
+            jsb_check(_address_locked.load(std::memory_order_relaxed) == 0);
             if (p_index.get_index() < 0 || p_index.get_index() >= capacity())
             {
                 return false;
@@ -777,7 +780,7 @@ namespace jsb::internal
         void grow_if_needed(int p_extra_count)
         {
             jsb_check(p_extra_count > 0);
-            jsb_check(_address_locked == 0);
+            jsb_check(_address_locked.load(std::memory_order_relaxed) == 0);
             const int current_size = capacity();
             const int expected_size = _used_size + p_extra_count;
             if (expected_size <= current_size)
@@ -986,8 +989,12 @@ namespace jsb::internal
 
     private:
 #if JSB_WITH_CHECK
-        jsb_force_inline void lock_address() { ++_address_locked; }
-        jsb_force_inline void unlock_address() { jsb_check(_address_locked > 0); --_address_locked; }
+        jsb_force_inline void lock_address() { _address_locked.fetch_add(1, std::memory_order_relaxed); }
+        jsb_force_inline void unlock_address()
+        {
+            const int previous = _address_locked.fetch_sub(1, std::memory_order_relaxed);
+            jsb_check(previous > 0);
+        }
 #endif
 
 #if JSB_SARRAY_CONSISTENCY_CHECK
