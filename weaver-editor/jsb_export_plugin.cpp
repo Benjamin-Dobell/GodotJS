@@ -243,6 +243,14 @@ void GodotJSExportPlugin::export_raw_files(const PackedStringArray &p_paths, boo
 
     for (const String& file_path : p_paths)
     {
+        // Declaration files describe the TypeScript graph only. They are not
+        // runtime modules and must not be converted to a fictitious `.d.js`
+        // path during export.
+        if (file_path.ends_with(".d.ts"))
+        {
+            continue;
+        }
+
         // in this situation, we do not call `load module` to avoid unexpected side effects
         // (for example, it's impossible to directly load worker scripts in main env).
 
