@@ -40,7 +40,7 @@ namespace v8
         ref_count_(1),
         disposed_(false),
         handle_scope_(nullptr),
-        pending_delete_(nearest_shift(2048U)),
+        pending_delete_(Math::nearest_shift(2048U)),
         stack_pos_(0)
     {
         rt_ = JSContextGroupCreate();
