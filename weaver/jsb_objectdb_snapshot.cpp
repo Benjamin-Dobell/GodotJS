@@ -6,6 +6,8 @@
 #include "core/io/dir_access.h"
 #include "core/io/file_access.h"
 #include "core/io/json.h"
+#include "core/os/memory.h"
+#include "servers/rendering/rendering_server.h"
 #include "../bridge/jsb_environment.h"
 #include "modules/objectdb_profiler/snapshot_collector.h"
 
@@ -16,6 +18,26 @@ void GodotJSObjectDBSnapshot::_bind_methods()
 			D_METHOD("capture_pixel_memory_snapshot", "include_allocator"),
 			&GodotJSObjectDBSnapshot::capture_pixel_memory_snapshot,
 			DEFVAL(false));
+	ClassDB::bind_static_method(
+			jsb_typename(GodotJSObjectDBSnapshot),
+			D_METHOD("capture_texture_memory_snapshot"),
+			&GodotJSObjectDBSnapshot::capture_texture_memory_snapshot);
+	ClassDB::bind_static_method(
+			jsb_typename(GodotJSObjectDBSnapshot),
+			D_METHOD("set_allocation_profile_enabled", "enabled"),
+			&GodotJSObjectDBSnapshot::set_allocation_profile_enabled);
+	ClassDB::bind_static_method(
+			jsb_typename(GodotJSObjectDBSnapshot),
+			D_METHOD("reset_allocation_profile"),
+			&GodotJSObjectDBSnapshot::reset_allocation_profile);
+	ClassDB::bind_static_method(
+			jsb_typename(GodotJSObjectDBSnapshot),
+			D_METHOD("is_allocation_profile_enabled"),
+			&GodotJSObjectDBSnapshot::is_allocation_profile_enabled);
+	ClassDB::bind_static_method(
+			jsb_typename(GodotJSObjectDBSnapshot),
+			D_METHOD("get_allocation_profile"),
+			&GodotJSObjectDBSnapshot::get_allocation_profile);
 	ClassDB::bind_static_method(
 			jsb_typename(GodotJSObjectDBSnapshot),
 			D_METHOD("capture_to_file", "snapshot_file_path", "snapshot_context"),
@@ -40,6 +62,60 @@ Dictionary GodotJSObjectDBSnapshot::capture_pixel_memory_snapshot(bool p_include
 	const std::shared_ptr<jsb::Environment> env = jsb::Environment::_access();
 	ERR_FAIL_COND_V_MSG(!env, Dictionary(), "No active GodotJS Environment for current thread/isolate.");
 	return env->get_pixel_memory_snapshot(p_include_allocator);
+}
+
+Array GodotJSObjectDBSnapshot::capture_texture_memory_snapshot()
+{
+#ifdef DEBUG_ENABLED
+	RenderingServer *rendering_server = RenderingServer::get_singleton();
+	if (rendering_server == nullptr)
+	{
+		return Array();
+	}
+	return rendering_server->_texture_debug_usage_bind();
+#else
+	return Array();
+#endif
+}
+
+void GodotJSObjectDBSnapshot::set_allocation_profile_enabled(bool p_enabled)
+{
+	Memory::set_allocation_profile_enabled(p_enabled);
+}
+
+void GodotJSObjectDBSnapshot::reset_allocation_profile()
+{
+	Memory::reset_allocation_profile();
+}
+
+bool GodotJSObjectDBSnapshot::is_allocation_profile_enabled()
+{
+	return Memory::is_allocation_profile_enabled();
+}
+
+Dictionary GodotJSObjectDBSnapshot::get_allocation_profile()
+{
+	Dictionary result;
+#ifdef DEBUG_ENABLED
+	result["supported"] = true;
+#else
+	result["supported"] = false;
+#endif
+	result["enabled"] = Memory::is_allocation_profile_enabled();
+	Array records;
+	for (const Memory::AllocationProfileRecord &record : Memory::get_allocation_profile())
+	{
+		Dictionary item;
+		item["callsite"] = (uint64_t)record.callsite;
+		item["live_bytes"] = (uint64_t)record.live_bytes;
+		item["peak_live_bytes"] = (uint64_t)record.peak_live_bytes;
+		item["live_blocks"] = (uint64_t)record.live_blocks;
+		item["allocation_count"] = (uint64_t)record.allocation_count;
+		item["free_count"] = (uint64_t)record.free_count;
+		records.push_back(item);
+	}
+	result["records"] = records;
+	return result;
 }
 
 Dictionary GodotJSObjectDBSnapshot::capture_to_file(const String &p_snapshot_file_path, const Dictionary &p_snapshot_context)
