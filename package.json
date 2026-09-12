@@ -11,6 +11,7 @@
     "test:web-bound-object-conversion": "node scripts/test/test-web-bound-object-conversion.mjs",
     "test:web-cache-lookup": "node scripts/test/test-web-cache-lookup.mjs",
     "test:web-filesystem-sync": "node scripts/test/test-web-filesystem-sync.mjs",
+    "test:web-filesystem-copy": "node scripts/test/test-web-filesystem-copy.mjs",
     "test:web-global-null": "node scripts/test/test-web-global-null.mjs",
     "test:web-identity-hash": "node scripts/test/test-web-identity-hash.mjs",
     "test:web-numeric-value": "node scripts/test/test-web-numeric-value.mjs",
