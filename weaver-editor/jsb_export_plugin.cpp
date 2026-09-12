@@ -1026,6 +1026,14 @@ void GodotJSExportPlugin::_export_file(const String& p_path, const String& p_typ
         return;
     }
 
+    if (p_path.ends_with(".d.ts"))
+    {
+        // Type declarations are editor/type-checking inputs only. They have no
+        // corresponding runtime module and must never become `.d.js` exports.
+        skip();
+        return;
+    }
+
     if (is_static_asset_path(p_path))
     {
         skip();
