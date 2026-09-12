@@ -53,10 +53,16 @@ namespace jsb::internal
          */
         static String convert_typescript_path(const String& p_source_path);
 
+        /** Convert a TypeScript path using an exporter-selected output root. */
+        static String convert_typescript_path(const String& p_source_path, const String& p_out_res_path);
+
         /**
          * convert javascript path back into typescript path
          */
         static String convert_javascript_path(const String& p_source_path);
+
+        /** Convert a Javascript path using an exporter-selected output root. */
+        static String convert_javascript_path(const String& p_source_path, const String& p_out_res_path);
 
         /** simply verify the file extension (.js || .cjs) */
         static bool is_recognized_javascript_extension(const String& p_path);
@@ -65,5 +71,17 @@ namespace jsb::internal
     };
 
 }
+
+/** Runtime-visible adapter for GodotJS path identity helpers. */
+class GodotJSPathUtil : public Object
+{
+    GDCLASS(GodotJSPathUtil, Object)
+
+protected:
+    static void _bind_methods();
+
+public:
+    static String convert_compiled_script_path(const String& p_path);
+};
 
 #endif

@@ -10,6 +10,7 @@
 namespace
 {
     static constexpr char kWebCommonJSExportOption[] = JSB_MODULE_NAME_STRING "/web_commonjs/enabled";
+    static constexpr char kPackagingOutputDirectorySetting[] = JSB_MODULE_NAME_STRING "/editor/packaging/output_directory";
     static constexpr char kCommonJSWrapperHeader[] = "module.exports = function(exports,require,module,__filename,__dirname){";
     static constexpr char kCommonJSWrapperFooter[] = "\n};\n";
 
@@ -235,6 +236,11 @@ bool GodotJSExportPlugin::is_static_asset_path(const String& p_path) const
 
 void GodotJSExportPlugin::export_raw_files(const PackedStringArray &p_paths, bool p_permit_typescript)
 {
+    if (export_build_failed_)
+    {
+        return;
+    }
+
     for (const String& file_path : p_paths)
     {
         // in this situation, we do not call `load module` to avoid unexpected side effects
@@ -242,20 +248,39 @@ void GodotJSExportPlugin::export_raw_files(const PackedStringArray &p_paths, boo
 
         if (!file_path.ends_with("." JSB_TYPESCRIPT_EXT))
         {
+            bool exported = false;
             if (is_web_commonjs_export_enabled() && file_path.get_file() == "package.json")
             {
                 write_external_file_as(file_path, file_path, false);
-                export_raw_file(file_path, false);
+                exported = export_raw_file(file_path, false);
             }
             else
             {
-                export_external_or_raw_file(file_path, false);
+                exported = export_external_or_raw_file(file_path, false);
+            }
+            if (!exported)
+            {
+                get_export_platform()->add_message(
+                    EditorExportPlatform::EXPORT_MESSAGE_ERROR,
+                    get_name(),
+                    vformat("Failed to export required GodotJS file: %s", file_path));
             }
         }
         else if (p_permit_typescript)
         {
-            const String compiled_script_path = jsb::internal::PathUtil::convert_typescript_path(file_path);
-            export_external_or_raw_file(compiled_script_path, true);
+            const String compiled_script_path = jsb::internal::PathUtil::convert_typescript_path(file_path, export_output_res_path_);
+            if (export_dedicated_build_enabled_ && !FileAccess::exists(compiled_script_path))
+            {
+                JSB_EXPORTER_LOG(Verbose, "skip TypeScript include without a compiled Web/export graph entry: %s", file_path);
+                continue;
+            }
+            if (!export_external_or_raw_file(compiled_script_path, true))
+            {
+                get_export_platform()->add_message(
+                    EditorExportPlatform::EXPORT_MESSAGE_ERROR,
+                    get_name(),
+                    vformat("Failed to export required compiled GodotJS file: %s", compiled_script_path));
+            }
         }
     }
 }
@@ -307,6 +332,130 @@ void GodotJSExportPlugin::_export_begin(const HashSet<String>& p_features, bool 
     exported_paths_.clear();
     external_paths_.clear();
     static_asset_paths_.clear();
+    default_output_res_path_ = jsb::internal::Settings::get_jsb_out_res_path();
+    export_build_failed_ = false;
+    export_dedicated_build_enabled_ = false;
+    export_output_path_pushed_ = false;
+    Vector<String> export_features;
+    export_features.reserve(p_features.size());
+    for (const String& feature : p_features)
+    {
+        export_features.push_back(feature);
+    }
+    const Variant configured_output_directory = ProjectSettings::get_singleton()->get_setting_with_override_and_custom_features(
+        kPackagingOutputDirectorySetting,
+        export_features
+    );
+    if (configured_output_directory.get_type() != Variant::NIL
+        && configured_output_directory.get_type() != Variant::STRING)
+    {
+        export_build_failed_ = true;
+        get_export_platform()->add_message(
+            EditorExportPlatform::EXPORT_MESSAGE_ERROR,
+            get_name(),
+            "GodotJS/editor/packaging/output_directory must be a string path or empty."
+        );
+    }
+    else if (configured_output_directory.get_type() == Variant::STRING)
+    {
+        String output_directory_error;
+        if (!jsb::internal::Settings::validate_jsb_out_dir_name(String(configured_output_directory), &output_directory_error))
+        {
+            export_build_failed_ = true;
+            get_export_platform()->add_message(
+                EditorExportPlatform::EXPORT_MESSAGE_ERROR,
+                get_name(),
+                output_directory_error
+            );
+        }
+    }
+    export_output_res_path_ = jsb::internal::Settings::get_jsb_out_res_path(export_features);
+    if (!export_build_failed_)
+    {
+        jsb::internal::Settings::set_export_jsb_out_res_path(export_output_res_path_);
+        export_output_path_pushed_ = true;
+    }
+    JSB_EXPORTER_LOG(Verbose, "TypeScript export output path: %s", export_output_res_path_);
+    const PackedStringArray typescript_build_command = jsb::internal::Settings::get_packaging_typescript_build_command(export_features);
+    if (!export_build_failed_ && typescript_build_command.size() > 0)
+    {
+        export_dedicated_build_enabled_ = true;
+        String executable = typescript_build_command.get(0);
+        List<String> arguments;
+        for (int index = 1; index < typescript_build_command.size(); index++)
+        {
+            String argument = typescript_build_command.get(index);
+            if (argument.begins_with("res://"))
+            {
+                argument = ProjectSettings::get_singleton()->globalize_path(argument);
+            }
+            arguments.push_back(argument);
+        }
+        if (executable.begins_with("res://"))
+        {
+            executable = ProjectSettings::get_singleton()->globalize_path(executable);
+        }
+
+        String build_output;
+        int build_exit_code = 0;
+        const Error build_error = OS::get_singleton()->execute(
+            executable,
+            arguments,
+            &build_output,
+            &build_exit_code,
+            true
+        );
+        if (build_error != OK || build_exit_code != 0)
+        {
+            export_build_failed_ = true;
+            get_export_platform()->add_message(
+                EditorExportPlatform::EXPORT_MESSAGE_ERROR,
+                get_name(),
+                vformat(
+                    "Configured TypeScript build failed (error=%s, exit_code=%d): %s",
+                    jsb_ext_error_string(build_error),
+                    build_exit_code,
+                    build_output.strip_edges()
+                )
+            );
+        }
+        else
+        {
+            // The exporter shares the editor's main JS environment.  A
+            // repeated export can therefore otherwise traverse the module
+            // cache populated by an earlier export, even though the
+            // synchronous TypeScript build above has emitted fresh bytes at
+            // the same paths.  Use the normal editor hot-reload pipeline so
+            // changed modules and their transitive dependents are marked,
+            // reloaded, and any live GodotJSScript instances are rebound
+            // before dependency traversal begins.
+            if (GodotJSScriptLanguage* language = GodotJSScriptLanguage::get_singleton())
+            {
+                const Error reload_error = language->scan_external_changes();
+                if (reload_error != OK)
+                {
+                    export_build_failed_ = true;
+                    get_export_platform()->add_message(
+                        EditorExportPlatform::EXPORT_MESSAGE_ERROR,
+                        get_name(),
+                        vformat(
+                            "Failed to reload GodotJS modules after the TypeScript build (error=%s).",
+                            jsb_ext_error_string(reload_error)
+                        )
+                    );
+                }
+            }
+            else
+            {
+                export_build_failed_ = true;
+                get_export_platform()->add_message(
+                    EditorExportPlatform::EXPORT_MESSAGE_ERROR,
+                    get_name(),
+                    "GodotJS script language is unavailable after the TypeScript build."
+                );
+            }
+        }
+    }
     web_commonjs_export_ = p_features.has("web") && (bool) get_option(kWebCommonJSExportOption);
     web_commonjs_export_base_dir_ = web_commonjs_export_ ? p_path.get_base_dir() : String();
     const PackedStringArray static_assets = jsb::internal::Settings::get_packaging_static_assets();
@@ -354,6 +503,15 @@ void GodotJSExportPlugin::_export_begin(const HashSet<String>& p_features, bool 
 
 void GodotJSExportPlugin::_export_end()
 {
+    if (export_output_path_pushed_)
+    {
+        jsb::internal::Settings::clear_export_jsb_out_res_path();
+        export_output_path_pushed_ = false;
+    }
+    export_output_res_path_ = String();
+    default_output_res_path_ = String();
+    export_build_failed_ = false;
+    export_dedicated_build_enabled_ = false;
 }
 
 bool GodotJSExportPlugin::export_raw_file_as(const String& p_source_path, const String& p_export_path, bool p_remap)
@@ -745,7 +903,14 @@ bool GodotJSExportPlugin::export_compiled_script(const String& p_path, bool p_re
         const v8::Local<v8::Context> context = env_->get_context();
         v8::Context::Scope context_scope(context);
 
-        export_module_files(*module, p_remap);
+        if (!export_module_files(*module, p_remap))
+        {
+            get_export_platform()->add_message(
+                EditorExportPlatform::EXPORT_MESSAGE_ERROR,
+                get_name(),
+                vformat("Failed to export required GodotJS module: %s", p_path));
+            return false;
+        }
         jsb::Environment* environment = jsb::Environment::wrap(isolate);
         const v8::Local<v8::Object> module_obj = module->module.Get(isolate);
         if (v8::Local<v8::Value> temp; module_obj->Get(context, jsb_name(environment, children)).ToLocal(&temp) && temp->IsArray())
@@ -771,7 +936,12 @@ bool GodotJSExportPlugin::export_compiled_script(const String& p_path, bool p_re
     }
     else
     {
+        get_export_platform()->add_message(
+            EditorExportPlatform::EXPORT_MESSAGE_ERROR,
+            get_name(),
+            vformat("Failed to load required GodotJS module for export: %s", p_path));
         JSB_EXPORTER_LOG(Warning, "failed to include module: %s", p_path);
+        return false;
     }
     return true;
 }
@@ -842,6 +1012,12 @@ void GodotJSExportPlugin::_export_file(const String& p_path, const String& p_typ
 {
     //TODO when exporting for web.impl, need to reorganize all scripts into a monolithic script (like webpack)? and preload it before everything get run.
 
+    if (export_build_failed_)
+    {
+        skip();
+        return;
+    }
+
     if (is_static_asset_path(p_path))
     {
         skip();
@@ -849,9 +1025,16 @@ void GodotJSExportPlugin::_export_file(const String& p_path, const String& p_typ
         return;
     }
 
+
     if (p_path.ends_with("." JSB_TYPESCRIPT_EXT))
     {
-        const String compiled_script_path = jsb::internal::PathUtil::convert_typescript_path(p_path);
+        const String compiled_script_path = jsb::internal::PathUtil::convert_typescript_path(p_path, export_output_res_path_);
+        if (export_dedicated_build_enabled_ && !FileAccess::exists(compiled_script_path))
+        {
+            skip();
+            JSB_EXPORTER_LOG(Verbose, "skip TypeScript source without a compiled Web/export graph entry: %s", p_path);
+            return;
+        }
         export_compiled_script(compiled_script_path, !is_web_commonjs_export_enabled());
 
         if (is_web_commonjs_export_enabled())
@@ -865,6 +1048,20 @@ void GodotJSExportPlugin::_export_file(const String& p_path, const String& p_typ
     }
     else
     {
+        if (export_dedicated_build_enabled_ && !web_commonjs_export_ && is_javascript_like_file(p_path)
+            && !default_output_res_path_.is_empty()
+            && p_path.begins_with(default_output_res_path_ + "/"))
+        {
+            // A dedicated build owns the selected export graph. Keep
+            // legitimate project JavaScript roots and explicit raw assets,
+            // while avoiding stale compiler output from the editor's default
+            // GodotJS directory; dependency traversal from the selected
+            // TypeScript roots adds fresh dedicated modules explicitly.
+            skip();
+            JSB_EXPORTER_LOG(Verbose, "skip default GodotJS output outside dedicated graph: %s", p_path);
+            return;
+        }
+
         if (is_web_commonjs_export_enabled() && is_javascript_like_file(p_path))
         {
             export_compiled_script(p_path, false);

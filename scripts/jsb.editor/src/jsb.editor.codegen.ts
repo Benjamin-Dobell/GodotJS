@@ -3958,6 +3958,14 @@ export class ResourceTSDCodeGen {
         const tasks = new CodegenTasks("Generating resource types");
 
         for (const resource_path of this._resource_paths) {
+            // TypeScript declaration files participate in the editor's type
+            // graph, but they are not Godot resources. Their `.ts` suffix is
+            // visible to Godot's resource scanner, so keep them out of the
+            // runtime resource-codegen path before ResourceLoader is asked to
+            // parse them.
+            if (resource_path.endsWith(".d.ts")) {
+                continue;
+            }
             tasks.add_task(`Generating resource type: ${resource_path}`, () => this.emit_resource_type(resource_path));
         }
 

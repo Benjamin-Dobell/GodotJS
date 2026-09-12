@@ -21,14 +21,35 @@ namespace jsb::internal
         static String get_jsb_out_dir_name();
 
         /**
+         * Resolve the output directory using an explicit export feature set.
+         * This is used by the editor exporter because the host OS is not the
+         * exported runtime platform.
+         */
+        static String get_jsb_out_dir_name(const Vector<String>& p_features);
+
+        /** Validate a project-relative output directory; empty selects the automatic default. */
+        static bool validate_jsb_out_dir_name(const String& p_path, String* r_error = nullptr);
+
+        /**
          * get path for .tsbuildinfo (.godot/.tsbuildinfo)
          */
         static String get_tsbuildinfo_path();
 
         /**
+         * Temporarily select the output root used while an export plugin loads
+         * compiled modules. Export-time module/resource callbacks otherwise run
+         * on the editor host and cannot infer the preset's custom feature set.
+         */
+        static void set_export_jsb_out_res_path(const String& p_out_res_path);
+        static void clear_export_jsb_out_res_path();
+
+        /**
          * get the res path for `outDir`, it's equivalent to `res://` + get_jsb_out_dir_name()
          */
         static String get_jsb_out_res_path();
+
+        /** Resolve the output path using an explicit export feature set. */
+        static String get_jsb_out_res_path(const Vector<String>& p_features);
 
         static String get_indentation();
 
@@ -63,6 +84,9 @@ namespace jsb::internal
         static PackedStringArray get_packaging_static_assets();
 
         static bool is_packaging_referenced_node_modules();
+
+        static PackedStringArray get_packaging_typescript_build_command();
+        static PackedStringArray get_packaging_typescript_build_command(const Vector<String>& p_features);
 
 #ifdef TOOLS_ENABLED
         // [EDITOR ONLY]

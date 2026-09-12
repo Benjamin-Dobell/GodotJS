@@ -63,6 +63,11 @@ private:
     HashSet<String> exported_paths_;
     HashSet<String> external_paths_;
     HashSet<String> static_asset_paths_;
+    String default_output_res_path_;
+    String export_output_res_path_;
+    bool export_output_path_pushed_ = false;
+    bool export_build_failed_ = false;
+    bool export_dedicated_build_enabled_ = false;
     bool web_commonjs_export_ = false;
     String web_commonjs_export_base_dir_;
     std::shared_ptr<jsb::Environment> env_;

@@ -1,6 +1,7 @@
 #include "register_types.h"
 
 #include "jsb.config.h"
+#include "internal/jsb_path_util.h"
 #include "weaver/jsb_weaver.h"
 
 #if JSB_WITH_WEB
@@ -24,6 +25,7 @@ void jsb_initialize_module(ModuleInitializationLevel p_level)
 
         GDREGISTER_CLASS(GodotJSScript);
         GDREGISTER_CLASS(GodotJSObjectDBSnapshot);
+        GDREGISTER_CLASS(GodotJSPathUtil);
 #ifdef TOOLS_ENABLED
         GDREGISTER_CLASS(GodotJSEditorHelper);
         GDREGISTER_CLASS(GodotJSEditorProgress);

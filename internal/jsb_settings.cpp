@@ -47,6 +47,37 @@ namespace jsb::internal
     static constexpr char kRtPackagingIncludeDirectories[] = JSB_MODULE_NAME_STRING "/editor/packaging/include_directories";
     static constexpr char kRtPackagingStaticAssets[] = JSB_MODULE_NAME_STRING "/editor/packaging/static_assets";
     static constexpr char kRtPackagingReferencedNodeModules[] = JSB_MODULE_NAME_STRING "/editor/packaging/referenced_node_modules";
+    static constexpr char kRtPackagingOutputDirectory[] = JSB_MODULE_NAME_STRING "/editor/packaging/output_directory";
+    static constexpr char kRtPackagingTypescriptBuildCommand[] = JSB_MODULE_NAME_STRING "/editor/packaging/typescript_build_command";
+
+    // Keep the pointer constant-initialized: a file-scope String/Vector would
+    // touch the allocator during startup before Godot's allocation profiler is
+    // ready. The stack is thread-local so export-time path selection cannot
+    // leak into another runtime thread, and push/pop supports nested exports.
+    static thread_local Vector<String>* export_jsb_out_res_path_stack = nullptr;
+
+    String normalize_jsb_output_directory(const Variant& p_value, const String& p_default)
+    {
+        if (p_value.get_type() != Variant::STRING)
+        {
+            return p_default;
+        }
+
+        String path = String(p_value).strip_edges().replace("\\", "/").simplify_path();
+        if (path.begins_with("res://"))
+        {
+            path = path.substr(6);
+        }
+        if (path.is_empty())
+        {
+            return p_default;
+        }
+        if (!Settings::validate_jsb_out_dir_name(path))
+        {
+            return p_default;
+        }
+        return path;
+    }
 
 
 #ifdef TOOLS_ENABLED
@@ -132,6 +163,24 @@ namespace jsb::internal
 #endif
 
             _GLOBAL_DEF(kRtPackagingWithSourceMap, true, false);
+
+            {
+                PropertyInfo PackagingOutputDirectory;
+                PackagingOutputDirectory.type = Variant::STRING;
+                PackagingOutputDirectory.name = kRtPackagingOutputDirectory;
+                PackagingOutputDirectory.hint = PROPERTY_HINT_DIR;
+                const String default_output_directory = ProjectSettings::get_singleton()->get_project_data_dir_name().path_join(JSB_MODULE_NAME_STRING);
+                _GLOBAL_DEF(PackagingOutputDirectory, default_output_directory, false, JSB_SET_IGNORE_DOCS(false), JSB_SET_BASIC(true), JSB_SET_INTERNAL(false));
+            }
+
+            {
+                PropertyInfo PackagingTypescriptBuildCommand;
+                PackagingTypescriptBuildCommand.type = Variant::PACKED_STRING_ARRAY;
+                PackagingTypescriptBuildCommand.name = kRtPackagingTypescriptBuildCommand;
+                PackagingTypescriptBuildCommand.hint = PROPERTY_HINT_ARRAY_TYPE;
+                PackagingTypescriptBuildCommand.hint_string = "String";
+                _GLOBAL_DEF(PackagingTypescriptBuildCommand, PackedStringArray(), false, JSB_SET_IGNORE_DOCS(false), JSB_SET_BASIC(true), JSB_SET_INTERNAL(false));
+            }
 
             {
                 PropertyInfo PackagingIncludeFiles;
@@ -247,6 +296,21 @@ namespace jsb::internal
         return GLOBAL_GET(kRtPackagingReferencedNodeModules);
     }
 
+    PackedStringArray Settings::get_packaging_typescript_build_command()
+    {
+        init_settings();
+        return (PackedStringArray) GLOBAL_GET(kRtPackagingTypescriptBuildCommand);
+    }
+
+    PackedStringArray Settings::get_packaging_typescript_build_command(const Vector<String>& p_features)
+    {
+        init_settings();
+        return (PackedStringArray) ProjectSettings::get_singleton()->get_setting_with_override_and_custom_features(
+            kRtPackagingTypescriptBuildCommand,
+            p_features
+        );
+    }
+
     bool Settings::is_bridge_logging_enabled()
     {
         init_settings();
@@ -293,7 +357,69 @@ namespace jsb::internal
 
     String Settings::get_jsb_out_dir_name()
     {
-        return get_project_data_dir_name().path_join(JSB_MODULE_NAME_STRING);
+        init_settings();
+        const String default_path = get_project_data_dir_name().path_join(JSB_MODULE_NAME_STRING);
+        return normalize_jsb_output_directory(GLOBAL_GET(kRtPackagingOutputDirectory), default_path);
+    }
+
+    bool Settings::validate_jsb_out_dir_name(const String& p_path, String* r_error)
+    {
+        // Validate the unsimplified component sequence. `String::simplify_path()`
+        // collapses an escaping sequence such as `x/../../outside` to a safe-
+        // looking path before validation, which would allow the exporter to
+        // launch its build command for an output that is outside the project.
+        String path = p_path.strip_edges().replace("\\", "/");
+        if (path.begins_with("res://"))
+        {
+            path = path.substr(6);
+        }
+        if (path.is_empty())
+        {
+            return true;
+        }
+        bool escapes_project_root = path.begins_with("/") || path.contains(":/");
+        int component_depth = 0;
+        const Vector<String> components = path.split("/");
+        for (const String &component : components)
+        {
+            if (component.is_empty() || component == ".")
+            {
+                continue;
+            }
+            if (component == "..")
+            {
+                if (component_depth == 0)
+                {
+                    escapes_project_root = true;
+                    break;
+                }
+                --component_depth;
+            }
+            else
+            {
+                ++component_depth;
+            }
+        }
+        if (path == "." || path == ".." || path.begins_with("../") || escapes_project_root || component_depth == 0)
+        {
+            if (r_error)
+            {
+                *r_error = "GodotJS/editor/packaging/output_directory must be empty or a project-relative path under res:// (for example .godot/GodotJS/web-export).";
+            }
+            return false;
+        }
+        return true;
+    }
+
+    String Settings::get_jsb_out_dir_name(const Vector<String>& p_features)
+    {
+        init_settings();
+        const String default_path = get_project_data_dir_name().path_join(JSB_MODULE_NAME_STRING);
+        const Variant configured = ProjectSettings::get_singleton()->get_setting_with_override_and_custom_features(
+            kRtPackagingOutputDirectory,
+            p_features
+        );
+        return normalize_jsb_output_directory(configured, default_path);
     }
 
     String Settings::get_tsbuildinfo_path()
@@ -303,7 +429,38 @@ namespace jsb::internal
 
     String Settings::get_jsb_out_res_path()
     {
+        if (export_jsb_out_res_path_stack && !export_jsb_out_res_path_stack->is_empty())
+        {
+            return export_jsb_out_res_path_stack->get(export_jsb_out_res_path_stack->size() - 1);
+        }
         return "res://" + get_jsb_out_dir_name();
+    }
+
+    void Settings::set_export_jsb_out_res_path(const String& p_out_res_path)
+    {
+        if (!export_jsb_out_res_path_stack)
+        {
+            export_jsb_out_res_path_stack = new Vector<String>();
+        }
+        export_jsb_out_res_path_stack->push_back(p_out_res_path);
+    }
+
+    void Settings::clear_export_jsb_out_res_path()
+    {
+        if (export_jsb_out_res_path_stack && !export_jsb_out_res_path_stack->is_empty())
+        {
+            export_jsb_out_res_path_stack->resize(export_jsb_out_res_path_stack->size() - 1);
+            if (export_jsb_out_res_path_stack->is_empty())
+            {
+                delete export_jsb_out_res_path_stack;
+                export_jsb_out_res_path_stack = nullptr;
+            }
+        }
+    }
+
+    String Settings::get_jsb_out_res_path(const Vector<String>& p_features)
+    {
+        return "res://" + get_jsb_out_dir_name(p_features);
     }
 
     PackedStringArray Settings::get_additional_search_paths()

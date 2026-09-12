@@ -82,10 +82,15 @@ namespace jsb::internal
 
     String PathUtil::convert_typescript_path(const String& p_source_path)
     {
+        return convert_typescript_path(p_source_path, Settings::get_jsb_out_res_path());
+    }
+
+    String PathUtil::convert_typescript_path(const String& p_source_path, const String& p_out_res_path)
+    {
         if (p_source_path.ends_with("." JSB_TYPESCRIPT_EXT))
         {
             jsb_checkf(p_source_path.begins_with("res://"), "can not proceed typescript sources not under the project directory");
-            const String replaced = Settings::get_jsb_out_res_path().path_join(
+            const String replaced = p_out_res_path.path_join(
                 p_source_path.substr(std::size("res://") - 1, p_source_path.length() - (int) std::size("res://") - 1)
                 + JSB_JAVASCRIPT_EXT);
             return replaced;
@@ -95,12 +100,17 @@ namespace jsb::internal
 
     String PathUtil::convert_javascript_path(const String& p_source_path)
     {
+        return convert_javascript_path(p_source_path, Settings::get_jsb_out_res_path());
+    }
+
+    String PathUtil::convert_javascript_path(const String& p_source_path, const String& p_out_res_path)
+    {
         bool is_js_extension = p_source_path.ends_with("." JSB_JAVASCRIPT_EXT);
         if (is_js_extension || p_source_path.ends_with("." JSB_COMMONJS_EXT) || p_source_path.ends_with("." JSB_MODULE_EXT))
         {
             int extension_length = is_js_extension ? 3 : 4;
-            const String root_path = Settings::get_jsb_out_res_path();
-            jsb_checkf(p_source_path.begins_with(root_path), "can not proceed javascript sources not under the project data directory");
+            const String root_path = p_out_res_path;
+            jsb_checkf(p_source_path.begins_with(root_path + "/"), "can not proceed javascript sources not under the project data directory");
             const String replaced = String("res://").path_join(
                 p_source_path.substr(root_path.length() + 1, p_source_path.length() - root_path.length() - extension_length)
                 + JSB_TYPESCRIPT_EXT);
@@ -133,4 +143,28 @@ namespace jsb::internal
         return true;
     }
 
+}
+
+void GodotJSPathUtil::_bind_methods()
+{
+    ClassDB::bind_static_method(
+        jsb_typename(GodotJSPathUtil),
+        D_METHOD("convert_compiled_script_path", "path"),
+        &GodotJSPathUtil::convert_compiled_script_path);
+}
+
+String GodotJSPathUtil::convert_compiled_script_path(const String& p_path)
+{
+    if (!jsb::internal::PathUtil::is_recognized_javascript_extension(p_path))
+    {
+        return String();
+    }
+
+    const String output_root = jsb::internal::Settings::get_jsb_out_res_path();
+    if (!p_path.begins_with(output_root + "/"))
+    {
+        return String();
+    }
+
+    return jsb::internal::PathUtil::convert_javascript_path(p_path, output_root);
 }
