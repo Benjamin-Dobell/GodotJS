@@ -247,6 +247,9 @@ namespace jsb
 
         internal::VariantInfoCollection variant_info_collection_;
 
+        // Set by create() after the shared_ptr control block is ready.
+        bool registered_in_environment_store_ = false;
+
     public:
         enum class Type : uint8_t
         {
@@ -298,6 +301,11 @@ namespace jsb
 
         Environment(const CreateParams& p_params);
         ~Environment();
+
+        // Construction must go through this factory so the registry only sees
+        // an Environment after enable_shared_from_this has initialized its
+        // control block.
+        static std::shared_ptr<Environment> create(const CreateParams& p_params);
 
         // standard init
         void init();

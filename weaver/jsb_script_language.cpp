@@ -90,7 +90,7 @@ void GodotJSScriptLanguage::init()
     params.thread_id = Thread::get_caller_id();
 
     // main environment
-    environment_ = std::make_shared<jsb::Environment>(params);
+    environment_ = jsb::Environment::create(params);
     environment_->init();
 
     if (const String entry_script_path = jsb::internal::Settings::get_entry_script_path();
@@ -410,7 +410,7 @@ String GodotJSScriptLanguage::get_type() const
     return jsb_typename(GodotJSScript);
 }
 
-void GodotJSScriptLanguage::scan_external_changes()
+Error GodotJSScriptLanguage::scan_external_changes()
 {
     const Vector<StringName> dirty_modules = environment_->scan_external_changes();
     const Error err = reload_dirty_modules(dirty_modules);
@@ -418,6 +418,7 @@ void GodotJSScriptLanguage::scan_external_changes()
     {
         JSB_LOG(Warning, "failed to reload externally changed modules: %s", jsb_ext_error_string(err));
     }
+    return err;
 }
 
 Vector<StringName> GodotJSScriptLanguage::replace_module_source(const String& p_module_id, const String& p_source, Error* r_error)
@@ -671,7 +672,7 @@ std::shared_ptr<jsb::Environment> GodotJSScriptLanguage::create_shadow_environme
     params.type = jsb::Environment::Type::Shadow;
     params.thread_id = Thread::UNASSIGNED_ID;
 
-    std::shared_ptr<jsb::Environment> env = std::make_shared<jsb::Environment>(params);
+    std::shared_ptr<jsb::Environment> env = jsb::Environment::create(params);
     JSB_LOG(Log, "creating a shadow Environment on thread %d for %s [env %s]",
         Thread::get_caller_id(),
         jsb_typename(GodotJSScript),

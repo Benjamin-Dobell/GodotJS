@@ -130,7 +130,7 @@ public:
         return environment_;
     }
 
-    void scan_external_changes();
+    Error scan_external_changes();
     bool is_main_environment(const jsb::Environment* p_env) const { return environment_.get() == p_env; }
     Vector<StringName> replace_module_source(const String& p_module_id, const String& p_source, Error* r_error = nullptr);
 

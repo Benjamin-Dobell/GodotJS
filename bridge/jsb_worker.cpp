@@ -404,7 +404,7 @@ namespace jsb
                 params.thread_id = Thread::get_caller_id();
                 params.type = Environment::Type::Worker;
 
-                const std::shared_ptr<Environment> env = std::make_shared<Environment>(params);
+                const std::shared_ptr<Environment> env = Environment::create(params);
                 impl->env_ = env;
                 env->init();
 

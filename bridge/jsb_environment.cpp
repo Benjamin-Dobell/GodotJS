@@ -76,86 +76,73 @@ namespace jsb
         std::vector<std::shared_ptr<Environment>> get_list()
         {
             std::vector<std::shared_ptr<Environment>> rval;
-            lock_.lock();
+            MutexLock lock(lock_);
+            // Reserve before promoting any weak references. If vector growth
+            // failed while the registry mutex was held, a just-promoted last
+            // owner could otherwise destruct under the same mutex and re-enter
+            // EnvironmentStore::remove().
+            rval.reserve(all_runtimes_.size());
             for (void* ptr : all_runtimes_)
             {
-                //TODO check if it's not removed from `all_runtimes_` but being destructed already (consider remove it from the list immediately on destructor called)
                 Environment* env = (Environment*) ptr;
-                rval.push_back(env->shared_from_this());
+                if (std::shared_ptr<Environment> strong_env = env->weak_from_this().lock())
+                {
+                    rval.push_back(std::move(strong_env));
+                }
             }
-            lock_.unlock();
             return rval;
         }
 
         // return an Environment shared pointer with an unknown pointer if it's a valid Environment instance.
         std::shared_ptr<Environment> access(void* p_runtime)
         {
-            std::shared_ptr<Environment> rval;
-            lock_.lock();
-            if (all_runtimes_.has(p_runtime))
+            MutexLock lock(lock_);
+            if (!all_runtimes_.has(p_runtime))
             {
-                //TODO check if it's not removed from `all_runtimes_` but being destructed already (consider remove it from the list immediately on destructor called)
-                Environment* env = (Environment*) p_runtime;
-                rval = env->shared_from_this();
+                return {};
             }
-            lock_.unlock();
-            return rval;
+            Environment* env = (Environment*) p_runtime;
+            return env->weak_from_this().lock();
         }
 
         // return existing Environment on the caller thread
         std::shared_ptr<Environment> access()
         {
-            std::shared_ptr<Environment> rval;
-            lock_.lock();
+            MutexLock lock(lock_);
             for (void* ptr : all_runtimes_)
             {
-                //TODO check if it's not removed from `all_runtimes_` but being destructed already (consider remove it from the list immediately on destructor called)
                 Environment* env = (Environment*) ptr;
+                // Check the immutable thread identity before promoting the weak
+                // pointer. A temporary strong reference for a non-matching
+                // environment could otherwise be the last owner and run its
+                // destructor while this registry mutex is still held.
                 if (env->thread_id_ != Thread::UNASSIGNED_ID && env->is_caller_thread())
                 {
-                    rval = env->shared_from_this();
-                    break;
+                    return env->weak_from_this().lock();
                 }
             }
-            lock_.unlock();
-            return rval;
-        }
-
-        // unsafe, may be destructing
-        Environment* internal_access(void* p_runtime)
-        {
-            Environment* rval = nullptr;
-            lock_.lock();
-            if (all_runtimes_.has(p_runtime))
-            {
-                rval = (Environment*) p_runtime;
-            }
-            lock_.unlock();
-            return rval;
+            return {};
         }
 
         bool exists(void* p_runtime) const
         {
-            lock_.lock();
+            MutexLock lock(lock_);
             const bool rval = all_runtimes_.has(p_runtime);
-            lock_.unlock();
             return rval;
         }
 
         void add(void* p_runtime)
         {
-            lock_.lock();
+            MutexLock lock(lock_);
             jsb_check(!all_runtimes_.has(p_runtime));
             all_runtimes_.insert(p_runtime);
-            lock_.unlock();
         }
 
         void remove(void* p_runtime)
         {
-            lock_.lock();
+            MutexLock lock(lock_);
             jsb_check(all_runtimes_.has(p_runtime));
             all_runtimes_.erase(p_runtime);
-            lock_.unlock();
         }
 
         jsb_force_inline static EnvironmentStore& get_shared()
@@ -168,6 +155,14 @@ namespace jsb
         BinaryMutex lock_;
         HashSet<void*> all_runtimes_;
     };
+
+    std::shared_ptr<Environment> Environment::create(const CreateParams& p_params)
+    {
+        std::shared_ptr<Environment> env = std::make_shared<Environment>(p_params);
+        env->registered_in_environment_store_ = true;
+        EnvironmentStore::get_shared().add(env.get());
+        return env;
+    }
 
     struct InstanceBindingCallbacks
     {
@@ -311,8 +306,6 @@ namespace jsb
 
                 module_loaders_.insert("godot", memnew(GodotModuleLoader));
                 module_loaders_.insert("godot-jsb", memnew(BridgeModuleLoader));
-                EnvironmentStore::get_shared().add(this);
-
                 JSB_BENCHMARK_SCOPE(JSRealm, Construct);
 
                 const v8::Local<v8::Context> context = v8::Context::New(isolate_);
@@ -568,7 +561,11 @@ namespace jsb
 #endif
         variant_allocator_.drain();
         flags_ |= EF_PostDispose;
-        EnvironmentStore::get_shared().remove(this);
+        if (registered_in_environment_store_)
+        {
+            EnvironmentStore::get_shared().remove(this);
+            registered_in_environment_store_ = false;
+        }
     }
 
     void Environment::update(uint64_t p_delta_msecs)
@@ -2530,7 +2527,12 @@ namespace jsb
         {
             return JSValueMove();
         }
-        return JSValueMove(shared_from_this(), rval);
+        if (const std::shared_ptr<Environment> self = weak_from_this().lock())
+        {
+            return JSValueMove(self, rval);
+        }
+        r_err = ERR_UNCONFIGURED;
+        return JSValueMove();
     }
 
     bool Environment::_get_main_module(v8::Local<v8::Object>* r_main_module) const

@@ -666,6 +666,45 @@ file = undefined;
         // There is no strong reference anymore, therefore the FileAccess object should have been deleted by JS GC.
         CHECK(weak_ref->get_ref().is_null());
     }
+
+    TEST_CASE("[jsb] EnvironmentStore ignores last-owner teardown callbacks")
+    {
+        GodotJSScriptLanguageIniter initer;
+
+        for (int round = 0; round < 16; ++round)
+        {
+            Environment::CreateParams params;
+            params.initial_class_slots = 128;
+            params.initial_object_slots = 512;
+            params.initial_script_slots = 32;
+            params.thread_id = Thread::get_caller_id();
+
+            std::shared_ptr<Environment> env = Environment::create(params);
+            env->init();
+
+            Ref<WeakRef> weak_ref = memnew(WeakRef);
+            Ref<FileAccess> file = FileAccess::open("./.godot/environment-teardown.txt", FileAccess::WRITE);
+            REQUIRE(file.is_valid());
+            weak_ref->set_ref(file);
+            {
+                JSB_TESTS_EXECUTION_SCOPE(env.get());
+
+                v8::Isolate* isolate = env->get_isolate();
+                v8::Local<v8::Context> context = env->get_context();
+                v8::Local<v8::Value> value;
+                REQUIRE(TypeConvert::gd_var_to_js(isolate, context, file, value));
+                context->Global()->Set(context, impl::Helper::new_string(isolate, "environmentTeardownFile"), value).Check();
+                file.unref();
+            }
+
+            // Reset the only shared owner without an explicit dispose(). The
+            // destructor drains ObjectDB while the registry still contains the
+            // raw token; callbacks must observe an expired weak_ptr and return
+            // safely instead of calling shared_from_this().
+            env.reset();
+            CHECK(weak_ref->get_ref().is_null());
+        }
+    }
 }
 
 #endif
