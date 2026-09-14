@@ -667,6 +667,45 @@ file = undefined;
         CHECK(weak_ref->get_ref().is_null());
     }
 
+#if JSB_WITH_V8
+    TEST_CASE("[jsb] RefCounted wrapper rebinding preserves native ownership")
+    {
+        Ref<WeakRef> weak_ref = memnew(WeakRef);
+        {
+            GodotJSScriptLanguageIniter initer;
+            const std::shared_ptr<Environment> env = GodotJSScriptLanguage::get_singleton()->get_environment();
+            Ref<RefCounted> native = memnew(RefCounted);
+            weak_ref->set_ref(native);
+            NativeObjectID binding_id;
+            {
+                JSB_TESTS_EXECUTION_SCOPE(env.get());
+                v8::Local<v8::Object> wrapper;
+                REQUIRE(TypeConvert::gd_obj_to_js(env->get_isolate(), env->get_context(), native.ptr(), wrapper));
+                binding_id = env->try_get_object_id(native.ptr());
+                CHECK(native->get_reference_count() == 2);
+            }
+
+            // A replacement wrapper reuses the native binding's ownership.
+            // Exercise that invariant directly, independent of V8's scheduling
+            // of first- and second-pass weak callbacks.
+            {
+                JSB_TESTS_EXECUTION_SCOPE(env.get());
+                NativeClassID class_id;
+                NativeClassInfoPtr class_info = env->expose_godot_object_class(ClassDB::classes.getptr(native->get_class_name()), &class_id);
+                REQUIRE(class_info);
+                const v8::Local<v8::Object> replacement = class_info.escape()->clazz.NewInstance(env->get_context());
+                REQUIRE(env->bind_godot_object(class_id, native.ptr(), replacement) == binding_id);
+                CHECK(native->get_reference_count() == 2);
+
+                v8::Local<v8::Object> wrapper;
+                REQUIRE(env->try_get_object(native.ptr(), wrapper));
+                CHECK(wrapper->StrictEquals(replacement));
+            }
+        }
+        CHECK(weak_ref->get_ref().is_null());
+    }
+#endif
+
     TEST_CASE("[jsb] EnvironmentStore ignores last-owner teardown callbacks")
     {
         GodotJSScriptLanguageIniter initer;

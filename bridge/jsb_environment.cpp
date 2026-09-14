@@ -1015,7 +1015,10 @@ namespace jsb
         if (p_pointer->is_ref_counted())
         {
             RefCounted* ref_counted = (RefCounted*) p_pointer;
-            if (!ref_counted->init_ref())
+            // A replacement wrapper reuses the binding's existing native reference.
+            // Its old weak callback is discarded after rebinding, so acquiring a
+            // second reference here would leave it without a matching finalizer.
+            if (!object_db_.has_object(p_pointer) && !ref_counted->init_ref())
             {
                 JSB_LOG(Error, "can not bind a dead object %d", (uintptr_t) p_pointer);
                 return {};
