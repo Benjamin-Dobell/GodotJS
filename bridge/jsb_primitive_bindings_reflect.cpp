@@ -222,6 +222,25 @@ namespace jsb
                         "Realm::can_convert_strict returned inconsistent type %s while %s is expected",
                         Variant::get_type_name(args[argument_index].get_type()),
                         Variant::get_type_name(argument_type));
+
+                    // Validated constructors read their arguments as exactly the declared
+                    // type, so a strictly convertible value (e.g. a Quaternion passed where
+                    // this overload takes a Basis) must be converted, not reinterpreted.
+                    if (args[argument_index].get_type() != argument_type)
+                    {
+                        Variant converted;
+                        Callable::CallError call_error;
+                        const Variant* source = &args[argument_index];
+                        Variant::construct(argument_type, converted, &source, 1, call_error);
+                        if (call_error.error != Callable::CallError::CALL_OK)
+                        {
+                            const String error_message = jsb_errorf("bad argument: %d", argument_index);
+                            while (argument_index >= 0) { args[argument_index--].~Variant(); }
+                            impl::Helper::throw_error(isolate, error_message);
+                            return;
+                        }
+                        args[argument_index] = converted;
+                    }
                 }
 
                 // we only need to alloc a dummy instance here because the validated constructor will cast it to the expected type by itself
