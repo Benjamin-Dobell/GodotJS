@@ -74,6 +74,17 @@ void GodotJSEditorPlugin::_notification(int p_what)
 
 void GodotJSEditorPlugin::_generate_types_from_cmdline()
 {
+    // Scene and resource typings enumerate EditorFileSystem, which is empty
+    // until the editor's first scan completes (that scan is also started from
+    // a deferred call, so either may run first). Wait for it, as Godot's own
+    // command-line export does.
+    EditorFileSystem* file_system = EditorFileSystem::get_singleton();
+    if (file_system->doing_first_scan())
+    {
+        file_system->connect("filesystem_changed", callable_mp(this, &GodotJSEditorPlugin::_generate_types_from_cmdline), CONNECT_ONE_SHOT);
+        return;
+    }
+
     generate_types([](auto success)
     {
         if (success)
