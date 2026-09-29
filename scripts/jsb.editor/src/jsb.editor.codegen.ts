@@ -3851,8 +3851,13 @@ export class SceneTSDCodeGen {
     }
 
     private make_scene_path(scene_path: string, include_filename = true) {
+        // Imported scenes (e.g. `.glb`) keep their extension, like their resource
+        // declaration (`model.glb.gen.ts`), so the output is always a `.ts` file.
+        const scene_file = /\.t?scn$/i.test(scene_path)
+            ? scene_path.replace(/\.t?scn$/i, ".nodes.gen.ts")
+            : scene_path + ".nodes.gen.ts";
         const relative_path = (
-            include_filename ? scene_path.replace(/\.t?scn$/i, ".nodes.gen.ts") : scene_path.replace(/\/[^\/]+$/, "")
+            include_filename ? scene_file : scene_path.replace(/\/[^\/]+$/, "")
         ).replace(/^res:\/\/?/, "");
 
         if (typeof this._out_dir !== "string" || this._out_dir.length == 0) {
